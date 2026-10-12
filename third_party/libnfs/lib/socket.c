@@ -212,7 +212,9 @@ set_tcp_sockopt(int sockfd, int optname, int value)
 {
 	int level;
 
-	#if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__sun) || (defined(__APPLE__) && defined(__MACH__))
+	#if defined(__PROSPERO__)
+		level = IPPROTO_TCP; /* PS5 has no getprotobyname implementation. */
+	#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__sun) || (defined(__APPLE__) && defined(__MACH__))
 	struct protoent *buf;
 
 	if ((buf = getprotobyname("tcp")) != NULL)
@@ -1987,7 +1989,12 @@ rpc_connect_sockaddr_async(struct rpc_context *rpc)
 			portOfs = (portOfs + 1) % portCount;
 
 			/* skip well-known ports */
+			/* PS5 has no services database; avoid its missing getservbyport. */
+#if defined(__PROSPERO__)
+			if (1) {
+#else
 			if (!getservbyport(port, "tcp")) {
+#endif
 				memset(&ss, 0, sizeof(ss));
 
 				switch (s->ss_family) {

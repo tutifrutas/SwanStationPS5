@@ -408,7 +408,14 @@ void app_rescan(void)
             snprintf(usb_roots[u], SwanStationPS5_PATH_MAX, "/mnt/usb%d/%s", u, app.global.usb_folder);
             roots[root_count++] = usb_roots[u];
         }
-    /* NFS shares mounted at start: each game folder shows like a drive's (the scan lists them like a folder). */
+    /* Retry failed shares on every explicit rescan, then scan the mounted roots. */
+    if (app.global.nfs_shares[0])
+    {
+        const int mounted = ps5_nfs_mount_all(4000);
+        char state[1024];
+        ps5_nfs_describe(state, sizeof(state));
+        SwanStationPS5_log("nfs: %d share(s) mounted; %s", mounted, state);
+    }
     const int nfs_count = ps5_nfs_mount_points(nfs_roots, PS5_NFS_MAX_MOUNTS);
     for (int n = 0; n < nfs_count; ++n)
         roots[root_count++] = nfs_roots[n];
@@ -416,9 +423,10 @@ void app_rescan(void)
     path_join(index, sizeof(index), app.paths.root, "library.txt");
     if (app.sandboxed)
     {
-        /* Can't list folders: the sync tool's index is the library. */
+        /* Local folders need the sync index, but NFS folders use our own directory shim. */
         if (!library_load_index(&app.library, index))
             app.library.count = 0;
+        library_scan_append(&app.library, roots + root_count - nfs_count, nfs_count);
     }
     else
     {
@@ -1613,21 +1621,12 @@ int main(void)
     }
     config_load(&app.global, app.paths.config);
     app.settings = app.global;
-    /* NFS shares (nfs_shares): mount at start, before the library scan, so their games show like a drive's.
-     * The console has no NFS client: the app serves /nfs/<host>/<path> itself (src/nfs). */
+    /* The app serves /nfs paths itself; app_rescan mounts them before scanning. */
     if (app.global.nfs_shares[0])
     {
         char nfs_error[256];
         if (!ps5_nfs_set_shares(app.global.nfs_shares, nfs_error, sizeof(nfs_error)))
             SwanStationPS5_log("nfs: %s", nfs_error);
-        const int nfs_mounted = ps5_nfs_mount_all(4000);
-        SwanStationPS5_log("nfs: %d share(s) mounted", nfs_mounted);
-        if (nfs_mounted > 0)
-        {
-            char nfs_state[1024];
-            ps5_nfs_describe(nfs_state, sizeof(nfs_state));
-            SwanStationPS5_log("nfs:\n%s", nfs_state);
-        }
     }
     i18n_set(app.global.language);
     theme_apply(app.global.theme);

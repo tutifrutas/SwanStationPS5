@@ -493,15 +493,20 @@ static int cmp_games(const void *a, const void *b)
     return str_icmp(((const Game *)a)->title, ((const Game *)b)->title);
 }
 
-void library_scan(Library *lib, const char *const *roots, int root_count)
+void library_scan_append(Library *lib, const char *const *roots, int root_count)
 {
-    lib->count = 0;
     for (int i = 0; i < root_count; ++i)
         if (path_is_dir(roots[i]))
             scan_root(lib, roots[i]);
     if (lib->count > 1)
         qsort(lib->games, (size_t)lib->count, sizeof(Game), cmp_games);
     SwanStationPS5_log("library: %d games", lib->count);
+}
+
+void library_scan(Library *lib, const char *const *roots, int root_count)
+{
+    lib->count = 0;
+    library_scan_append(lib, roots, root_count);
 }
 
 bool library_load_index(Library *lib, const char *index_path)

@@ -46,6 +46,8 @@ extern "C"
     FILE *__real_fopen(const char *path, const char *mode);
     FILE *__real_freopen(const char *path, const char *mode, FILE *fp);
     int __real_fclose(FILE *fp);
+    int ps5_memstream_fclose(FILE *fp) __attribute__((weak));
+    int ps5_memstream_fflush(FILE *fp) __attribute__((weak));
     size_t __real_fread(void *ptr, size_t size, size_t n, FILE *fp);
     size_t __real_fwrite(const void *ptr, size_t size, size_t n, FILE *fp);
     int __real_fseek(FILE *fp, long off, int whence);
@@ -1210,7 +1212,7 @@ extern "C"
     {
         const int slot = SlotOfFile(fp);
         if (slot < 0)
-            return __real_fclose(fp);
+            return ps5_memstream_fclose ? ps5_memstream_fclose(fp) : __real_fclose(fp);
         return CloseSlot(slot) == 0 ? 0 : EOF;
     }
 
@@ -1345,7 +1347,7 @@ extern "C"
     int __wrap_fflush(FILE *fp)
     {
         if (SlotOfFile(fp) < 0)
-            return __real_fflush(fp);
+            return ps5_memstream_fflush ? ps5_memstream_fflush(fp) : __real_fflush(fp);
         return 0;
     }
 

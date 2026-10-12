@@ -28,6 +28,8 @@ typedef struct
 /* Scans every existing root. Each root holds one game per folder, or loose
  * images. Multi-disc folders without an .m3u get one written for them. */
 void library_scan(Library *lib, const char *const *roots, int root_count);
+/* Add scannable roots to a library already loaded from an index. */
+void library_scan_append(Library *lib, const char *const *roots, int root_count);
 
 /* For a sandboxed SwanStationPS5 (folders can't be listed): reads the index written by
  * tools/SwanStationPS5_sync.py, one game per line:

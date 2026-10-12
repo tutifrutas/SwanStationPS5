@@ -140,7 +140,7 @@ You can also pick one folder name for USB drives in Settings > System > SwanStat
 
 Put the BIOS files directly in the folder, not in a subfolder, and keep their standard names: `SCPH1001.BIN` (recommended), `scph5500.bin` (Japan), `scph5501.bin` (USA), `scph5502.bin` (Europe), `scph101.bin`. A BIOS on a USB drive or extended storage is not read. With no BIOS, SwanStation uses its built-in OpenBIOS. *Settings → About* shows which one is in use.
 
-> On a USB drive or extended storage SwanStationPS5 needs `/data` unlocked to list the folders (see below). Sandboxed, it only shows the games listed in `/data/SwanStationPS5/library.txt`.
+> On a USB drive or extended storage SwanStationPS5 needs `/data` unlocked to list the folders (see below). Sandboxed, it uses `/data/SwanStationPS5/library.txt` for local games; NFS shares are scanned separately.
 
 ### NFS: games on a server
 
@@ -162,7 +162,7 @@ Address forms:
 | `nfs://192.168.1.187/srv/games?version=4` | NFS v4 only |
 | `nfs://nas/psx?nfsport=2049&mountport=1058` | fixed ports (no portmapper); `uid=`, `gid=` also work |
 
-The files appear under `/nfs/<host>/<path>`, so `/nfs/192.168.1.187/shared/array/psx/<Game>/<Game>.chd` is listed with the local games. Shares are **read-only** (writes fail with `EROFS`), which is enough for disc images: Bios, saves, states, covers and cheats stay on the console. Use an IP address or make sure the console's DNS resolves the name. A share that does not answer within 4 seconds is skipped for the session; the log (`/data/SwanStationPS5/logs/SwanStationPS5.log`) says why.
+The files appear under `/nfs/<host>/<path>`, so `/nfs/192.168.1.187/shared/array/psx/<Game>/<Game>.chd` is listed with the local games. Shares are **read-only** (writes fail with `EROFS`), which is enough for disc images: Bios, saves, states, covers and cheats stay on the console. Use an IP address or make sure the console's DNS resolves the name. A share that does not answer within 4 seconds is skipped until the next library rescan; the log (`/data/SwanStationPS5/logs/SwanStationPS5.log`) says why.
 
 > Sharing an NFS export from a PC: on Windows use WinNFSd or haneWIN NFS Server; on Linux/TrueNAS export a folder read-only to the console's IP.
 

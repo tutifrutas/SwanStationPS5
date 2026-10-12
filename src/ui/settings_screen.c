@@ -282,7 +282,7 @@ static const Row LIBRARY[] = {
      APPLY_NOW, SP_STATS, true, NO_FIELD, NULL, 0, 0},
     {NULL, "Memory cards", "Every game's memory card: see the saves, export a card, import one.", K_ACTION,
      APPLY_NOW, SP_MEMCARDS, true, NO_FIELD, NULL, 0, 0},
-    {NULL, "Rescan library", "Looks for games added to /data/SwanStationPS5/games or a USB drive.", K_ACTION,
+    {NULL, "Rescan library", "Looks for new games on local drives and NFS shares; retries disconnected shares.", K_ACTION,
      APPLY_NOW, SP_RESCAN, true, NO_FIELD, NULL, 0, 0},
 };
 
@@ -1494,13 +1494,22 @@ static void nfs_shares_set(const char *text)
     char error[256];
     if (!ps5_nfs_set_shares(list, error, sizeof(error)) && error[0])
         app_toast(error);
+    app_rescan();
     if (list[0])
     {
-        const int mounted = ps5_nfs_mount_all(4000);
-        if (mounted > 0)
+        char points[PS5_NFS_MAX_MOUNTS][PS5_NFS_PATH_MAX];
+        if (ps5_nfs_mount_points(points, PS5_NFS_MAX_MOUNTS) > 0)
             app_toast("NFS share connected");
+        else
+        {
+            char state[512], message[256];
+            ps5_nfs_describe(state, sizeof(state));
+            const char *reason = strstr(state, ": not mounted: ");
+            snprintf(message, sizeof(message), "NFS: %.210s",
+                     reason ? reason + strlen(": not mounted: ") : state[0] ? state : "no valid shares");
+            app_toast_for(message, 5.0f);
+        }
     }
-    app_rescan();
 }
 
 static void activate(const Row *r)

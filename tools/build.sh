@@ -291,7 +291,20 @@ if [[ ${APP_VULKAN:-0} == 1 ]]; then
     for input in "${link_inputs[@]}"; do
         [[ $input == -lz || $input == */libz.a ]] || kept+=("$input")
     done
+    # Both the NFS shim and the SDK memstream wrap fclose/fflush. Keep the
+    # SDK's memstream handlers under distinct names and dispatch to them for
+    # ordinary FILEs; otherwise Mesa's open_memstream would lose its flush.
+    platform_archive="$build/libps5platform-nfs.a"
+    cp "$sdk_root/target/lib/libps5platform.a" "$platform_archive"
+    "${LLVM_OBJCOPY:-llvm-objcopy}" \
+        --redefine-sym __wrap_fclose=ps5_memstream_fclose \
+        --redefine-sym __wrap_fflush=ps5_memstream_fflush "$platform_archive"
+    for i in "${!radv_link_inputs[@]}"; do
+        [[ ${radv_link_inputs[i]} == "$sdk_root/target/lib/libps5platform.a" ]] &&
+            radv_link_inputs[i]="$platform_archive"
+    done
     link_inputs=("${kept[@]}" "${radv_link_inputs[@]}")
+    ninja_inputs+=("$platform_archive")
     linker_options+=(--error-limit=0)
     # AGC lives in system modules the SDK has no stubs for: tiny link-only
     # libraries let the converter record the imports (PS5 RetroArch's).
