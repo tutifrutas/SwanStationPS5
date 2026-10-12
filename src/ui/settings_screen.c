@@ -8,6 +8,7 @@
 #include "../controls.h"
 #include "../core/host.h"
 #include "../i18n.h"
+#include "../nfs/ps5_nfs.h"
 #include "../profiles.h"
 #include "../platform/platform.h"
 #include "../platform/xbr.h"
@@ -75,6 +76,7 @@ enum Special
     SP_HDTEX, /* drives the two core options for texture packs */
     SP_OUTPUT, /* the screen's resolution, changed at once */
     SP_USBFOLDER, /* the games folder on USB drives, typed */
+    SP_NFSHARES,  /* games on an NFS server, typed */
 };
 
 typedef struct
@@ -289,6 +291,8 @@ static const Row SYSTEM[] = {
      K_CHOICE, APPLY_NOW, SP_OUTPUT, true, INT_FIELD(output_res), OUTPUTS, 3, 0},
     {NULL, "Games folder on USB drives", "A folder name to look for games in on USB drives. It is looked for on /mnt/usb0/ and /mnt/usb1/ at once, as the number changes with the drives plugged in: psx searches /mnt/usb0/psx and /mnt/usb1/psx. Leave it empty to turn it off.",
      K_ACTION, APPLY_NOW, SP_USBFOLDER, true, NO_FIELD, NULL, 0, 0},
+    {NULL, "NFS library shares", "Games on an NFS server, typed as nfs:// addresses separated by ';' (only this app can read them). Example: nfs://192.168.1.187/shared/array. The shelf lists a connected share's games like a drive's; Bios, saves, states and covers stay on the console.",
+     K_ACTION, APPLY_NOW, SP_NFSHARES, true, NO_FIELD, NULL, 0, 0},
     {"Emulation", "Region", "Auto follows the disc; force 50 or 60 Hz if a game misbehaves.", K_CHOICE,
      APPLY_NEXT_GAME, SP_NONE, false, INT_FIELD(region), REGIONS, 3, 0},
     {NULL, "Fast CD loading", "Shorter loading screens; videos still play at normal speed. Rarely, a game glitches.", K_TOGGLE, APPLY_NOW,
@@ -649,6 +653,7 @@ static const char *value_label(const Row *r, char *buf, size_t size)
     case SP_CREDITS: return "AngelXex";
     case SP_HOTKEYS: return tr("{Touchpad} + {R2} / {L2}");
     case SP_USBFOLDER: return app.global.usb_folder[0] ? app.global.usb_folder : tr("Off");
+    case SP_NFSHARES: return app.global.nfs_shares[0] ? app.global.nfs_shares : tr("Off");
     case SP_UPDATE:
         switch (update_state())
         {
@@ -1434,7 +1439,7 @@ static void draw_rows(void)
         }
         case K_ACTION:
             icon_draw(ICON_CHEVRON_RIGHT, right - 36, ry + 21, 34, TH_TEXT_SOFT);
-            if (r->special == SP_UPDATE || r->special == SP_USBFOLDER)
+            if (r->special == SP_UPDATE || r->special == SP_USBFOLDER || r->special == SP_NFSHARES)
                 text_draw_fit(right - 50, ry + 24, 22, FONT_REGULAR, TH_TEXT_SOFT, ALIGN_RIGHT, w - 520,
                               value_label(r, buf, sizeof(buf)));
             break;
@@ -1464,6 +1469,37 @@ static void usb_folder_set(const char *text)
     str_copy(app.global.usb_folder, sizeof(app.global.usb_folder), name);
     str_copy(app.settings.usb_folder, sizeof(app.settings.usb_folder), name);
     app_save_settings();
+    app_rescan();
+}
+
+/* The text typed for the NFS shares: nfs:// addresses, ';'-separated. Only this app can read them. */
+static void nfs_shares_set(const char *text)
+{
+    char list[sizeof(app.global.nfs_shares)];
+    str_copy(list, sizeof(list), text);
+    size_t start = 0, end = strlen(list);
+    while (start < end && (list[start] == ' ' || list[start] == '\t'))
+        ++start;
+    while (end > start && (list[end - 1] == ' ' || list[end - 1] == '\t' || list[end - 1] == '\r' ||
+                           list[end - 1] == '\n'))
+        --end;
+    list[end] = '\0';
+    memmove(list, list + start, end - start + 1);
+    for (char *p = list; *p; ++p)
+        if (*p == '\n' || *p == '\r')
+            *p = ';';
+    str_copy(app.global.nfs_shares, sizeof(app.global.nfs_shares), list);
+    str_copy(app.settings.nfs_shares, sizeof(app.settings.nfs_shares), list);
+    app_save_settings();
+    char error[256];
+    if (!ps5_nfs_set_shares(list, error, sizeof(error)) && error[0])
+        app_toast(error);
+    if (list[0])
+    {
+        const int mounted = ps5_nfs_mount_all(4000);
+        if (mounted > 0)
+            app_toast("NFS share connected");
+    }
     app_rescan();
 }
 
@@ -1507,6 +1543,12 @@ static void activate(const Row *r)
         textinput_open(SCREEN_SETTINGS, "Games folder on USB drives",
                        "Type the folder name: games are looked for on /mnt/usb0/ and /mnt/usb1/",
                        app.global.usb_folder, usb_folder_set);
+        return;
+    case SP_NFSHARES:
+        sfx_play(SFX_SELECT);
+        textinput_open(SCREEN_SETTINGS, "NFS library shares",
+                       "Type one or more nfs:// shares, separated by ';'. Example: nfs://192.168.1.187/shared/array",
+                       app.global.nfs_shares, nfs_shares_set);
         return;
     case SP_UPDATE:
         sfx_play(SFX_SELECT);

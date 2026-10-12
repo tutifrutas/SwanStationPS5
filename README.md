@@ -146,7 +146,9 @@ Put the BIOS files directly in the folder, not in a subfolder, and keep their st
 
 Games can also live on an NFS export and show up on the shelf like a drive's. The console kernel has no NFS client, so SwanStationPS5 is its own (`libnfs`): each share is served under `/nfs/<host>/<path>` by wrapping the C library's file calls. **Only SwanStationPS5 can read them** — no other app or the system sees the share.
 
-Add the shares to `/data/SwanStationPS5/SwanStationPS5.ini`, separated by `;` (or new lines), and restart:
+**Set a share in the app:** *Settings → System → NFS library shares*, press Cross and type one or more `nfs://` addresses, separated by `;`. The share connects at once and its games appear on the shelf. Clearing the field turns the shares off.
+
+Or set it in `/data/SwanStationPS5/SwanStationPS5.ini` (same key) and restart:
 
 ```ini
 nfs_shares=nfs://192.168.1.187/shared/array/psx;nfs://192.168.1.5/volume1/PS2
