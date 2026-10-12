@@ -350,7 +350,15 @@ It remembers what is already on the console, so you can run it again whenever yo
 
 ## Building from source
 
-To build the PS5 app on Linux or WSL (Ubuntu 24.04):
+With Podman, build the full Vulkan app folder in one command:
+
+```bash
+bash tools/build-podman.sh  # -> dist/PPSA98510/ (no exFAT image)
+```
+
+The script uses the existing `localhost/ps5-retroarch-build:clang18` image when available, otherwise Ubuntu 24.04. It fetches the pinned RADV sources and builds the driver on the first run; later runs reuse `.deps/`. The first build needs network access, several GB of disk space, and can take a while.
+
+To build the PS5 app directly on Linux or WSL (Ubuntu 24.04):
 
 ```bash
 sudo apt install clang-18 lld-18 llvm-18 make ninja-build ccache pkg-config python3 python3-venv tar unzip wget
