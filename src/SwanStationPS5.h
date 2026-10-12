@@ -164,6 +164,7 @@ typedef struct
     bool fsr;             /* FSR 1 scales the picture before the shader */
     int output_res;       /* the screen output: 0 1080p, 1 1440p, 2 4K */
     char usb_folder[48];  /* a folder name looked for on USB drives: /mnt/usb0/<name> and /mnt/usb1/<name> (empty: none) */
+    char nfs_shares[512]; /* nfs:// addresses separated by ';' or new lines (empty: none); src/nfs/ps5_nfs.h */
     bool framegen;        /* frame interpolation: a frame between two of the game's (120 Hz screen, from the next start) */
     int ss_opt[SS_OPT_COUNT]; /* SwanStation's own core options: the chosen value's index in SS_OPTS[i].values */
 } Settings;

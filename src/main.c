@@ -23,6 +23,7 @@
 #include "play.h"
 #include "remote.h"
 #include "update.h"
+#include "nfs/ps5_nfs.h"
 #include "ra/achievements.h"
 #include "stats.h"
 #include "ui/coverflow.h"
@@ -385,7 +386,8 @@ void app_rescan(void)
     static const char *const names[] = {"SwanStationPS5", "PSXS5"};
     static char drive_roots[2 * 2 * 4][SwanStationPS5_PATH_MAX];
     static char usb_roots[2][SwanStationPS5_PATH_MAX];
-    const char *roots[2 + 2 * 2 * 4 + 2];
+    static char nfs_roots[PS5_NFS_MAX_MOUNTS][SwanStationPS5_PATH_MAX];
+    const char *roots[2 + 2 * 2 * 4 + 2 + PS5_NFS_MAX_MOUNTS];
     int root_count = 0;
     roots[root_count++] = app.paths.games;
     roots[root_count++] = "/data/PSXS5/games";
@@ -406,6 +408,10 @@ void app_rescan(void)
             snprintf(usb_roots[u], SwanStationPS5_PATH_MAX, "/mnt/usb%d/%s", u, app.global.usb_folder);
             roots[root_count++] = usb_roots[u];
         }
+    /* NFS shares mounted at start: each game folder shows like a drive's (the scan lists them like a folder). */
+    const int nfs_count = ps5_nfs_mount_points(nfs_roots, PS5_NFS_MAX_MOUNTS);
+    for (int n = 0; n < nfs_count; ++n)
+        roots[root_count++] = nfs_roots[n];
     char index[SwanStationPS5_PATH_MAX];
     path_join(index, sizeof(index), app.paths.root, "library.txt");
     if (app.sandboxed)
@@ -1607,6 +1613,22 @@ int main(void)
     }
     config_load(&app.global, app.paths.config);
     app.settings = app.global;
+    /* NFS shares (nfs_shares): mount at start, before the library scan, so their games show like a drive's.
+     * The console has no NFS client: the app serves /nfs/<host>/<path> itself (src/nfs). */
+    if (app.global.nfs_shares[0])
+    {
+        char nfs_error[256];
+        if (!ps5_nfs_set_shares(app.global.nfs_shares, nfs_error, sizeof(nfs_error)))
+            SwanStationPS5_log("nfs: %s", nfs_error);
+        const int nfs_mounted = ps5_nfs_mount_all(4000);
+        SwanStationPS5_log("nfs: %d share(s) mounted", nfs_mounted);
+        if (nfs_mounted > 0)
+        {
+            char nfs_state[1024];
+            ps5_nfs_describe(nfs_state, sizeof(nfs_state));
+            SwanStationPS5_log("nfs:\n%s", nfs_state);
+        }
+    }
     i18n_set(app.global.language);
     theme_apply(app.global.theme);
     stats_load(app.paths.user);

@@ -16,6 +16,8 @@
 | [Microsoft DirectXTex](https://github.com/microsoft/DirectXTex) | `texconv` presentation-image preparation |
 | [FFmpeg](https://ffmpeg.org/) | Developer-supplied selection-audio preparation |
 | [ShadowMountPlus](https://github.com/drakmor/ShadowMountPlus) | Directory-style deployment and hardware validation |
+| [sahlberg/libnfs](https://github.com/sahlberg/libnfs) | NFS client library for games on NFS shares (`third_party/libnfs`), LGPL-2.1-or-later with its protocol files under BSD-2-Clause |
+| [Swordpdf/PS5SX2](https://github.com/Swordpdf/PS5SX2) | The console libnfs port and the `/nfs` file-call shim (`src/nfs/orbis_nfs.cpp`, GPL-3.0) |
 | [ArkSama/PS5-Lapy-JB-Daemon](https://github.com/ArkSama/PS5-Lapy-JB-Daemon) | Original Lapy project and owned-root design |
 | [sodaraptor: Hypnagogia 無限の夢 Boundless Dreams Jewel Case](https://sketchfab.com/3d-models/hypnagogia-boundless-dreams-jewel-case-20e4780167b6441fb364060c79870378) | The 3D jewel case of the shelf (`assets/psx_case_NTSC.obj` and the textures made from its atlases by `tools/make_case_textures.py`), CC-BY 4.0; each game's cover replaces the printed art |
 | [mpereiraesaa/PS5-Lapy-JB-Daemon](https://github.com/mpereiraesaa/PS5-Lapy-JB-Daemon) | Exact-title one-shot helper and cooperative elevation protocol |

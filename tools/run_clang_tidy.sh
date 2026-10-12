@@ -60,6 +60,7 @@ app_cpp_sources+=("$root/tooling/native/app_crt.cpp" "$root/tooling/native/app_c
 if (( ${#app_cpp_sources[@]} )); then
     "$tidy" "${app_cpp_sources[@]}" --quiet --warnings-as-errors='*' -- \
         -std=c++20 -fno-exceptions -fno-rtti --target=x86_64-sie-ps5 "${example_includes[@]}" \
+        -I"$root/third_party/libnfs/include" \
         -isystem "$sdk/target/include/c++/v1" -isystem "$sdk/target/include" \
         -isystem "$pacbrew_include"
 fi

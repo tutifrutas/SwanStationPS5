@@ -60,7 +60,7 @@ static bool config_apply(Settings *s, const char *path)
     FILE *f = fopen(path, "r");
     if (!f)
         return false;
-    char line[256];
+    char line[1024]; /* long enough for nfs_shares (a ';'-separated list of nfs:// addresses) */
     bool seen_vibration = false;
     int old_rumble = -1, old_strength = -1;
     while (fgets(line, sizeof(line), f))
@@ -219,6 +219,8 @@ static bool config_apply(Settings *s, const char *path)
             s->framegen = as_bool(value);
         else if (strcmp(key, "usb_folder") == 0)
             snprintf(s->usb_folder, sizeof(s->usb_folder), "%s", value);
+        else if (strcmp(key, "nfs_shares") == 0)
+            snprintf(s->nfs_shares, sizeof(s->nfs_shares), "%s", value);
         else if (strcmp(key, "output_res") == 0)
             s->output_res = atoi(value) % 3;
         else if (strcmp(key, "fsr") == 0)
@@ -379,6 +381,7 @@ bool config_save(const Settings *s, const char *path)
             s->widescreen, s->multitap, s->rewind, s->quick_resume, s->crt, s->border, s->remote,
             s->update_check);
     fprintf(f, "renderer=%d\noutput_res=%d\nusb_folder=%s\n", s->renderer, s->output_res, s->usb_folder);
+    fprintf(f, "nfs_shares=%s\n", s->nfs_shares);
     fprintf(f, "version=%s\n", SwanStationPS5_VERSION); /* a newer version starts with clean settings (main.c) */
     fprintf(f, "pgxp=%d\nra_popups=%d\nra_tracker=%d\ncrop_edges=%d\n", s->pgxp, s->ra_popups, s->ra_tracker,
             s->crop_edges);

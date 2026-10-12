@@ -142,6 +142,28 @@ Put the BIOS files directly in the folder, not in a subfolder, and keep their st
 
 > On a USB drive or extended storage SwanStationPS5 needs `/data` unlocked to list the folders (see below). Sandboxed, it only shows the games listed in `/data/SwanStationPS5/library.txt`.
 
+### NFS: games on a server
+
+Games can also live on an NFS export and show up on the shelf like a drive's. The console kernel has no NFS client, so SwanStationPS5 is its own (`libnfs`): each share is served under `/nfs/<host>/<path>` by wrapping the C library's file calls. **Only SwanStationPS5 can read them** — no other app or the system sees the share.
+
+Add the shares to `/data/SwanStationPS5/SwanStationPS5.ini`, separated by `;` (or new lines), and restart:
+
+```ini
+nfs_shares=nfs://192.168.1.187/shared/array/psx;nfs://192.168.1.5/volume1/PS2
+```
+
+Address forms:
+
+| Address | Meaning |
+| --- | --- |
+| `nfs://192.168.1.187/shared/array` | NFS v3 through the server's portmapper (Linux, Synology, QNAP, TrueNAS), else v4 on port 2049 |
+| `nfs://192.168.1.187/srv/games?version=4` | NFS v4 only |
+| `nfs://nas/psx?nfsport=2049&mountport=1058` | fixed ports (no portmapper); `uid=`, `gid=` also work |
+
+The files appear under `/nfs/<host>/<path>`, so `/nfs/192.168.1.187/shared/array/psx/<Game>/<Game>.chd` is listed with the local games. Shares are **read-only** (writes fail with `EROFS`), which is enough for disc images: Bios, saves, states, covers and cheats stay on the console. Use an IP address or make sure the console's DNS resolves the name. A share that does not answer within 4 seconds is skipped for the session; the log (`/data/SwanStationPS5/logs/SwanStationPS5.log`) says why.
+
+> Sharing an NFS export from a PC: on Windows use WinNFSd or haneWIN NFS Server; on Linux/TrueNAS export a folder read-only to the console's IP.
+
 ## What you need
 
 - **A jailbroken PS5** with [etaHEN](https://github.com/etaHEN/etaHEN) and kstuff loaded. Development happens on firmware 13.60.
