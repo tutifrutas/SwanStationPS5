@@ -1475,6 +1475,11 @@ static void usb_folder_set(const char *text)
 /* The text typed for the NFS shares: nfs:// addresses, ';'-separated. Only this app can read them. */
 static void nfs_shares_set(const char *text)
 {
+    if (app.game)
+    {
+        app_toast("Quit the game first");
+        return;
+    }
     char list[sizeof(app.global.nfs_shares)];
     str_copy(list, sizeof(list), text);
     size_t start = 0, end = strlen(list);
@@ -1554,6 +1559,11 @@ static void activate(const Row *r)
                        app.global.usb_folder, usb_folder_set);
         return;
     case SP_NFSHARES:
+        if (app.game)
+        {
+            app_toast("Quit the game first");
+            return;
+        }
         sfx_play(SFX_SELECT);
         textinput_open(SCREEN_SETTINGS, "NFS library shares",
                        "Type one or more nfs:// shares, separated by ';'. Example: nfs://192.168.1.187/shared/array",
@@ -1606,7 +1616,7 @@ static void activate(const Row *r)
             app_toast("Quit the game first");
             return;
         }
-        if (app.storage_error[0])
+        if (app.storage_error[0] && !app.global.nfs_shares[0])
             return;
         app_rescan();
         char msg[64];

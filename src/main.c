@@ -380,6 +380,9 @@ void app_restart_covers(void)
 
 void app_rescan(void)
 {
+    /* Rescanning can realloc the library array that app.game points into. */
+    if (app.game)
+        return;
     /* The games folder, then on each drive both <drive>/<name> and <drive>/<name>/games, for our
      * folder name and for the PSXS5 one. */
     static const char *const drives[] = {"/mnt/usb0", "/mnt/usb1", "/mnt/ext0", "/mnt/ext1"};
@@ -1643,7 +1646,7 @@ int main(void)
     if (app.global.update_check && !app.storage_error[0])
         update_check();
     shelf_init(app.global.last_game);
-    if (!app.storage_error[0])
+    if (!app.storage_error[0] || app.global.nfs_shares[0])
         app_rescan();
     shelf_select_game(app.global.last_game);
     plat_notify("SwanStationPS5 ready");

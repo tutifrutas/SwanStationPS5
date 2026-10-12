@@ -347,14 +347,12 @@ bool MountLocked(Share &s, int timeout_ms)
     std::string why;
     bool answered =
         false; // the server's MOUNT service said something (a refusal), so v4 wouldn't help
-    bool silent = false; // nothing answered at all (no refusal of the connection either): v4
-                         // wouldn't get further
     const std::vector<int> versions = s.addr.version == 4   ? std::vector<int>{4}
                                       : s.addr.version == 3 ? std::vector<int>{3}
                                                             : std::vector<int>{3, 4};
     for (const int version : versions)
     {
-        if (version == 4 && (answered || silent) && s.addr.version == 0)
+        if (version == 4 && answered && s.addr.version == 0)
             break;
         for (size_t keep = comps.size();; keep--)
         {
@@ -401,7 +399,6 @@ bool MountLocked(Share &s, int timeout_ms)
                                  err.find("there is no folder") == 0 ||
                                  err.find("NFS4ERR") != std::string::npos;
             answered = answered || refused;
-            silent = silent || rc == -ETIMEDOUT;
             const std::string this_why = "NFS v" + std::to_string(version) + " " + exp + ": " + err;
             Log("%s: %s", s.url.c_str(), this_why.c_str());
             // The state names the first try's error (the whole path, v3) and the last's when they
