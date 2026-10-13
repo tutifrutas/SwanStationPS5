@@ -19,8 +19,10 @@
 #include "remote.h"
 
 #include "app.h"
+#include "discimport.h"
 #include "ra/achievements.h"
 #include "ra/login.h"
+#include "ui/coverflow.h"
 #include "net.h"
 #include "i18n.h"
 #include "platform/platform.h"
@@ -574,6 +576,14 @@ static void serve(int fd)
     char method[8] = "", path[512] = "";
     if (sscanf(req, "%7s %511s", method, path) != 2)
         return;
+    /* a disc is being installed: nothing the phone sends changes anything (settings, cards, saves, sign-in) until
+     * it is done; reading still works */
+    if (strcmp(method, "GET") != 0 && discimport_state() == DI_RUNNING)
+    {
+        static const char busy[] = "{\"ok\":false,\"error\":\"installing a disc\"}";
+        respond(fd, "503 Service Unavailable", "application/json", busy, sizeof(busy) - 1);
+        return;
+    }
     if (!strcmp(path, "/") || !strcmp(path, "/index.html"))
     {
         size_t len;
@@ -792,7 +802,7 @@ void remote_frame(void)
         {
             const Game *g = &app.library.games[i];
             str_copy(games[game_count].id, sizeof(games[0].id), g->id);
-            str_copy(games[game_count].title, sizeof(games[0].title), g->title);
+            str_copy(games[game_count].title, sizeof(games[0].title), shelf_game_title(g));
             str_copy(games[game_count].serial, sizeof(games[0].serial), g->serial);
             ++game_count;
         }

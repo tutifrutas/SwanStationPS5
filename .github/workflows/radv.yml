@@ -1,18 +1,15 @@
 # SwanStationPS5 v2 - builds Mihawk-99's RADV port (Mesa's Vulkan driver for the PS5 GPU)
 # as a static archive, for the Vulkan renderer. Slow (Mesa), so it runs on
-# demand and its result is published as a release asset the app build downloads.
+# demand; its result is an artifact of the run (the app build downloads the release asset deps-radv-*, which already exists).
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 name: Build RADV (Vulkan driver)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [v2-vulkan]
-    paths: ['.github/workflows/radv.yml']
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   PS5_VULKAN_REV: fde9e3798c2ec1d8fccc90d5067cd6060490607f
@@ -67,14 +64,3 @@ jobs:
         with:
           name: radv-release
           path: '*.tar.zst'
-
-      - name: Publish as a release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag=deps-radv-${PS5_MESA_REV:0:8}
-          gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
-            gh release create "$tag" -R "$GITHUB_REPOSITORY" --prerelease --target "$GITHUB_SHA" \
-              --title "RADV build $tag (dependency for v2)" \
-              --notes "RADV from mihawk-99/PS5_Mesa $PS5_MESA_REV, built by PS5_Vulkan $PS5_VULKAN_REV. Not an app release."
-          gh release upload "$tag" -R "$GITHUB_REPOSITORY" --clobber *.tar.zst

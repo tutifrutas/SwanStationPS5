@@ -18,6 +18,7 @@ enum ThemeId
     THEME_MEMORY,      /* Memory Card, light */
     THEME_MEMORY_DARK, /* Memory Card, dark */
     THEME_RECORD,      /* Record Shelf */
+    THEME_GRAYRAT,    /* Grayrat: Classic's look with the colours of Memory Card Dark */
     THEME_COUNT
 };
 
@@ -33,7 +34,8 @@ enum ThemeBackdrop
     BACKDROP_STAGE, /* a lit band behind the covers, the 1.1 backdrop */
     BACKDROP_GRID,  /* a dark room and a glowing grid floor */
     BACKDROP_FLAT,  /* an even ground, lighter at the top */
-    BACKDROP_LAMP   /* a warm pool of light from above */
+    BACKDROP_LAMP,  /* a warm pool of light from above */
+    BACKDROP_FLOOR  /* a wall that lightens to the middle and, from there, a much darker floor */
 };
 
 typedef struct

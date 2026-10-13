@@ -8,12 +8,14 @@
 
 #include "app.h"
 #include "art.h"
+#include "core/host.h"
+#include "play.h"
 #include "platform/platform.h"
 
+/* The artwork has a 4:3 window: a wider picture (16:9 from the aspect ratio or the widescreen hack) goes without it */
 static bool wanted(const Settings *view)
 {
-    return view->bezel && app.game && view->aspect != ASPECT_STRETCH && view->aspect != ASPECT_16_9 &&
-           view->aspect != ASPECT_16_10;
+    return view->bezel && app.game && !play_widescreen_active() && host_aspect() < 1.5f;
 }
 
 bool bezel_draw(const Settings *view, uint8_t dim)

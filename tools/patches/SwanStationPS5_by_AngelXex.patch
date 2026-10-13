@@ -103,7 +103,7 @@ index 460ea0f0..55e13889 100644
      cpu_recompiler_code_generator_x64.cpp
    )
 diff --git a/src/core/cdrom.cpp b/src/core/cdrom.cpp
-index 590dd1ff..b0e662c2 100644
+index 590dd1ff..5d645a2f 100644
 --- a/src/core/cdrom.cpp
 +++ b/src/core/cdrom.cpp
 @@ -1207,6 +1207,7 @@ void CDROM::ExecuteCommand(TickCount ticks_late)
@@ -114,27 +114,6 @@ index 590dd1ff..b0e662c2 100644
        return;
      }
      break;
-@@ -2007,7 +2008,19 @@ void CDROM::DoIDRead()
-   static constexpr uint32_t REGION_STRING_LENGTH = 4;
-   static constexpr std::array<std::array<uint8_t, REGION_STRING_LENGTH>, static_cast<size_t>(DiscRegion::Count)>
-     region_strings = {{{'S', 'C', 'E', 'I'}, {'S', 'C', 'E', 'A'}, {'S', 'C', 'E', 'E'}, {0, 0, 0, 0}}};
--  m_async_response_fifo.PushRange(region_strings[static_cast<uint8_t>(m_disc_region)].data(), REGION_STRING_LENGTH);
-+  // Homebrew discs have no license, so their region is Other and the string would be empty: the BIOS then waits
-+  // forever after the logo. Answer with the console's own region so it accepts the disc.
-+  DiscRegion id_region = m_disc_region;
-+  if (id_region == DiscRegion::Other && CanReadMedia() && IsMediaPS1Disc())
-+  {
-+    switch (System::GetRegion())
-+    {
-+      case ConsoleRegion::NTSC_J: id_region = DiscRegion::NTSC_J; break;
-+      case ConsoleRegion::PAL: id_region = DiscRegion::PAL; break;
-+      default: id_region = DiscRegion::NTSC_U; break;
-+    }
-+  }
-+  m_async_response_fifo.PushRange(region_strings[static_cast<uint8_t>(id_region)].data(), REGION_STRING_LENGTH);
- 
-   SetAsyncInterrupt((flags_byte != 0) ? Interrupt::Error : Interrupt::Complete);
- }
 diff --git a/src/core/cpu_code_cache.cpp b/src/core/cpu_code_cache.cpp
 index fb62e9db..55ce96bc 100644
 --- a/src/core/cpu_code_cache.cpp
@@ -431,6 +410,24 @@ index 5e2b93f0..a1141a72 100644
 +  bool m_last_display_area_valid = false;
    void SetCapabilities();
    void DestroyResources();
+ 
+diff --git a/src/core/host_interface.cpp b/src/core/host_interface.cpp
+index 1d6f503c..2a55300b 100644
+--- a/src/core/host_interface.cpp
++++ b/src/core/host_interface.cpp
+@@ -129,7 +129,13 @@ std::optional<std::vector<uint8_t>> HostInterface::GetBIOSImage(ConsoleRegion re
+   std::optional<BIOS::Image> image = BIOS::LoadImageFromFile(
+     StringUtil::StdStringFromFormat("%s" FS_OSPATH_SEPARATOR_STR "%s", bios_dir.c_str(), bios_name.c_str()).c_str());
+   if (!image.has_value())
++  {
++    // OpenBIOS is built into the core: with no openbios.bin file in the folder, choosing it must not fall to whichever
++    // BIOS is there. Nothing returned makes System::Boot load its built-in copy.
++    if (bios_name == "openbios.bin")
++      return std::nullopt;
+     return FindBIOSImageInDirectory(region, bios_dir.c_str());
++  }
+   return image;
+ }
  
 diff --git a/src/core/host_interface.h b/src/core/host_interface.h
 index 918acd79..0c7efa2c 100644

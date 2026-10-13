@@ -164,15 +164,15 @@ $(RUNTIME): $(RUNTIME_INPUTS)
 	@printf '%s\n' '==> [libc] Generating the missing or outdated runtime'
 	@bash tools/rebuild-libc.sh
 
-app: $(RUNTIME) core radv
+app: $(RUNTIME) radv core
 	@printf '%s\n' '==> [app] Compiling, linking, signing, and assembling the app folder'
 	@bash tools/build.sh Folder
 
-ffpkg: $(RUNTIME) core
+ffpkg: $(RUNTIME) radv core
 	@printf '%s\n' '==> [ffpkg] Building the app folder and UFS2 image'
 	@bash tools/build.sh Ffpkg
 
-ffpfsc: $(RUNTIME) core
+ffpfsc: $(RUNTIME) radv core
 	@printf '%s\n' '==> [ffpfsc] Building the app folder and compressed image'
 	@bash tools/build.sh Ffpfsc
 
@@ -217,7 +217,9 @@ self-update-example: $(RUNTIME) self-update-helper
 		APP_ROOT_FILES="$(SELF_UPDATE_HELPER) $(APP_ROOT_FILES)" \
 		bash tools/build.sh Folder
 
-deploy:
+# The version into sce_sys/param.json (as make release does), the disc daemon payload (seconds; a mistake in it shows
+# before the app's long build), then the app.
+deploy: sync-version disc-daemon
 	@printf '%s\n' '==> [deploy] Building and publishing the selected app output over FTP'
 	@bash tools/deploy.sh
 
@@ -251,6 +253,15 @@ clean:
 distclean: clean
 	@printf '%s\n' '==> [distclean] Removing downloaded dependency caches'
 	@rm -rf -- .deps
+
+.PHONY: sync-version
+sync-version:
+	@python3 tools/make_release.py --sync-version
+
+.PHONY: disc-daemon
+# The disc daemon payload (payload/discd.c): dist/SwanStationPS5-DiscDaemon.elf, sent once to the console's ELF loader.
+disc-daemon:
+	@bash tools/build-disc-daemon.sh
 
 .PHONY: core
 # The core is rebuilt by its own Makefile; this only forwards to it.

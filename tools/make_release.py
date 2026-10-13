@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compiles SwanStationPS5 and packs the release asset, PPSA98510.zip, in the project root.
 
-    python3 tools/make_release.py                 # make, then PPSA98510.zip
+    python3 tools/make_release.py                 # the disc daemon payload, make, then PPSA98510.zip
     python3 tools/make_release.py --skip-build    # only pack what dist/ already holds
     python3 tools/make_release.py --jobs 12 --no-nice
     python3 tools/make_release.py --ip 192.168.1.90 [--port 2121]   # also deploys to the PS5 over FTP
@@ -9,6 +9,9 @@
 The zip holds just the app folder, PPSA98510/, as the releases have since 1.0.0: that is what the
 in-app updater installs, and what you copy to /data/homebrew. The release tag is the version from
 SwanStationPS5_VERSION in src/SwanStationPS5.h, without a "v" (1.0.1).
+
+The disc daemon payload (payload/discd.c) is built too, to dist/SwanStationPS5-DiscDaemon.elf; it is not in the zip:
+it is sent to the console's ELF loader (port 9021), not installed with the app.
 
 SPDX-License-Identifier: GPL-3.0-or-later
 """
@@ -63,6 +66,16 @@ def build(jobs, use_nice):
         sys.exit(f"error: the build failed (make exit code {result.returncode}); no zip was made")
 
 
+def build_daemon():
+    """The disc daemon payload, dist/SwanStationPS5-DiscDaemon.elf (make disc-daemon)."""
+    print("==> make disc-daemon", flush=True)
+    result = subprocess.run(["make", "disc-daemon"], cwd=ROOT)
+    elf = ROOT / "dist" / "SwanStationPS5-DiscDaemon.elf"
+    if result.returncode != 0 or not elf.is_file():
+        sys.exit(f"error: the disc daemon payload did not build (make exit code {result.returncode})")
+    return elf
+
+
 def deploy(ip, port):
     env = dict(os.environ, PS5_HOST=ip, FTP_PORT=str(port))
     print(f"==> deploy to ftp://{ip}:{port}/data/homebrew/{APP}/", flush=True)
@@ -89,6 +102,7 @@ def pack():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--sync-version", action="store_true", help="only write the version into sce_sys/param.json (make deploy does it)")
     ap.add_argument("--skip-build", action="store_true", help="do not run make; pack dist/ as it is")
     ap.add_argument("--jobs", type=int, default=10, help="parallel compile jobs (default 10)")
     ap.add_argument("--no-nice", action="store_true", help="run make at normal priority (faster, hogs the PC)")
@@ -98,9 +112,16 @@ def main():
 
     version = read_version()
     print(f"SwanStationPS5 {version}")
+    if args.sync_version:
+        sync_content_version(version)
+        return
     if not args.skip_build:
         sync_content_version(version)
+        # the payload first: it takes seconds, and if it fails nobody waits for the app to build to find out
+        daemon = build_daemon()
         build(args.jobs, not args.no_nice)
+        print(f"==> {daemon}  ({daemon.stat().st_size / 1e3:.0f} KB)")
+        print(f"    sha256 {hashlib.sha256(daemon.read_bytes()).hexdigest()}")
     out, count = pack()
     digest = hashlib.sha256(out.read_bytes()).hexdigest()
     print(f"==> {out}  ({count} files, {out.stat().st_size / 1e6:.1f} MB)")
@@ -109,6 +130,12 @@ def main():
         deploy(args.ip, args.port)
     print(f"    publish: gh release create {version} {out.name} --repo darkxex/SwanStationPS5 "
           f"--title \"SwanStationPS5 {version}\" --generate-notes --latest")
+    # How to send the disc daemon: only printed, never sent for you (the loader runs whatever it is given).
+    daemon_elf = ROOT / "dist" / "SwanStationPS5-DiscDaemon.elf"
+    if daemon_elf.is_file():
+        print(f"    disc daemon payload: dist/{daemon_elf.name}  (not sent; it is not in the zip)")
+        print(f"      send it once, with the app closed:  socat -t 99999999 - TCP:{args.ip or '<PS5 IP>'}:9021 "
+              f"< dist/{daemon_elf.name}")
     if args.ip:
         print(f"    live log (open the app first): nc {args.ip} 3232 | grep --line-buffered SwanStationPS5")
 

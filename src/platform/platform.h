@@ -67,6 +67,9 @@ bool plat_set_output(int resolution); /* 0 1080p, 1 1440p, 2 4K, at once (the GP
 void plat_want_output(int resolution); /* before plat_init: 0 1080p, 1 1440p, 2 4K (with the GPU interface; 1080p when the TV lacks it) */
 /* The console's time of day as the user set it up ("21:42" or "9:42 PM"). */
 void plat_clock(char *out, size_t size);
+/* The console's language as one of ours (LANG_*): French, Portuguese, Spanish (Spain or Latin America) and Japanese
+ * map to their own; any other, or no console, is English. */
+int plat_system_language(void);
 /* Frame profiling: the time since the previous mark goes to `name`
  * (drawing flushed first); averages are logged every 120 frames. */
 void plat_profile(const char *name);

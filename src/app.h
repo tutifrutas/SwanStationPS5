@@ -37,6 +37,7 @@ typedef struct
     Library library;
     CheatList cheats;
     const Game *game;         /* running game, NULL on the shelf */
+    const Game *settings_game; /* the shelf's game whose own settings Settings edits (opened from the shelf), else NULL */
     int game_index;           /* its library index */
     enum Screen screen;
     enum Screen settings_return;
@@ -70,12 +71,18 @@ void app_restart_covers(void);
 int app_nav_pad(void);
 /* resume: continue from the quick-resume save */
 void app_start_game(int index, bool resume);
+/* Boots the console's BIOS with no disc (Settings > About > Start BIOS) */
+void app_start_bios(void);
 void app_stop_game(void);
 /* Path of a game's own settings file. */
 void app_game_config_path(char *out, size_t size, const Game *g);
 /* Saves SwanStationPS5.ini and, when it has them, the running game's own settings. */
 void app_save_settings(void);
 void app_open_settings(enum Screen back_to);
+/* Settings from the shelf, with `game` (the one under the cursor) to choose "This game" for. */
+void app_open_shelf_settings(const Game *game);
+/* Back from Settings to the shelf: the shelf's game no longer has its settings loaded. */
+void app_close_shelf_settings(void);
 
 /* Screens: each handles input and draws one frame. */
 void shelf_screen(uint32_t pressed);
@@ -112,6 +119,15 @@ void menu_open(void);
 void settings_opened(void);
 void shelf_init(int last_game);
 void shelf_select_game(int library_index);
+/* Nothing is open on the shelf (no Continue box, no launch under way, no cover picker). */
+bool shelf_idle(void);
+/* The picture the shelf shows for a game without a cover (assets/nocover2.png). Not to be freed. */
+struct PlatTexture *shelf_no_cover(void);
+/* Puts the cursor on the game and starts it from the beginning, with no Continue box: a disc put in the drive. With
+ * `direct` (the app was opened by the disc daemon, nobody is watching) it also skips the opening animation and the
+ * click; otherwise it plays as when ✕ is pressed. False if the shelf is busy or the game cannot be shown. */
+bool shelf_show_game(int library_index); /* moves the cursor to the game (the shelf shows all if its category hides it) */
+bool shelf_play_game(int library_index, bool direct);
 void shelf_library_changed(void); /* after a rescan */
 
 /* Bottom hint bar: pairs of (PadGlyph, label), then an optional right-hand text. */

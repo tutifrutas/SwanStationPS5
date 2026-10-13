@@ -35,6 +35,9 @@ static bool signed_in;
 static rc_libretro_memory_regions_t regions;
 static bool regions_ready;
 static char agent[256];
+/* the notices RetroAchievements itself raises as achievements (ids from 101000000): not real unlocks */
+#define WARNING_ID 101000000u
+static bool warn_emulator, warn_version;
 
 /* ---------------------------------------------------------------- messages */
 
@@ -43,6 +46,7 @@ typedef struct
 {
     char title[96];
     char detail[192];
+    bool quiet; /* shown without the sound */
 } Message;
 
 static Message messages[MESSAGES];
@@ -72,7 +76,7 @@ bool ra_tracker(char *title, size_t title_size, char *progress, size_t progress_
     return on;
 }
 
-static void post(const char *title, const char *detail)
+static void post_ex(const char *title, const char *detail, bool quiet)
 {
     SwanStationPS5_log("ra: %s - %s", title, detail);
     if (!msg_lock)
@@ -83,11 +87,17 @@ static void post(const char *title, const char *detail)
         Message *m = &messages[(msg_head + msg_count++) % MESSAGES];
         str_copy(m->title, sizeof(m->title), title);
         str_copy(m->detail, sizeof(m->detail), detail);
+        m->quiet = quiet;
     }
     SDL_UnlockMutex(msg_lock);
 }
 
-bool ra_next_message(char *title, size_t title_size, char *detail, size_t detail_size)
+static void post(const char *title, const char *detail)
+{
+    post_ex(title, detail, false);
+}
+
+bool ra_next_message(char *title, size_t title_size, char *detail, size_t detail_size, bool *quiet)
 {
     if (!msg_lock)
         return false;
@@ -97,6 +107,7 @@ bool ra_next_message(char *title, size_t title_size, char *detail, size_t detail
     {
         str_copy(title, title_size, messages[msg_head].title);
         str_copy(detail, detail_size, messages[msg_head].detail);
+        *quiet = messages[msg_head].quiet;
         msg_head = (msg_head + 1) % MESSAGES;
         --msg_count;
     }
@@ -234,7 +245,8 @@ static void log_unlock(const rc_client_achievement_t *a)
             if (*p == '\t' || *p == '\n' || *p == '\r')
                 *p = ' ';
     }
-    fprintf(f, "%lld\t%u\t%s\t%s\t%s\n", (long long)time(NULL), a->points, game, title, description);
+    fprintf(f, "%lld\t%u\t%s\t%s\t%s\t%d\n", (long long)time(NULL), a->points, game, title, description,
+            hardcore ? 1 : 0);
     fclose(f);
 }
 
@@ -254,10 +266,10 @@ int ra_recent(RaRecent *out, int max)
     char line[512];
     while (fgets(line, sizeof(line), f))
     {
-        char *field[5] = {0};
+        char *field[6] = {0};
         char *p = line;
         line[strcspn(line, "\r\n")] = '\0';
-        for (int i = 0; i < 5 && p; ++i)
+        for (int i = 0; i < 6 && p; ++i)
         {
             field[i] = p;
             p = strchr(p, '\t');
@@ -266,12 +278,16 @@ int ra_recent(RaRecent *out, int max)
         }
         if (!field[3])
             continue;
+        /* older versions logged the notices as unlocks: leave them out */
+        if (!strcmp(field[3], "Unsupported Game Version") || !strncmp(field[3], "Warning:", 8))
+            continue;
         RaRecent *r = &out[at];
         r->when = atoll(field[0]);
         r->points = (unsigned)strtoul(field[1], NULL, 10);
         str_copy(r->game, sizeof(r->game), field[2]);
         str_copy(r->title, sizeof(r->title), field[3]);
         str_copy(r->description, sizeof(r->description), field[4] ? field[4] : "");
+        r->hardcore = field[5] && atoi(field[5]) != 0;
         at = (at + 1) % max;
         if (n < max)
             ++n;
@@ -302,12 +318,35 @@ unsigned ra_user_hardcore_score(void)
     return u ? u->score : 0;
 }
 
+/* The server does not know this emulator: hardcore unlocks are not counted. Said when both are true, in whichever order. */
+static void warn_hardcore_not_counted(void)
+{
+    if (warn_emulator && client && rc_client_get_hardcore_enabled(client))
+        post("RetroAchievements", /* the line break is fixed: the notice wraps the rest */
+             tr("Hardcore unlocks are not counted:\nRetroAchievements does not recognise this emulator yet."));
+}
+
 static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *c)
 {
     char detail[192];
     switch (e->type)
     {
     case RC_CLIENT_EVENT_ACHIEVEMENT_TRIGGERED:
+        if (e->achievement->id >= WARNING_ID)
+        {
+            /* "Unknown Emulator" / "Unsupported Game Version": shown once, but they are not unlocks */
+            if (e->achievement->title && strstr(e->achievement->title, "Emulator"))
+            {
+                warn_emulator = true;
+                warn_hardcore_not_counted(); /* in our words, and only when hardcore is on */
+            }
+            else
+            {
+                warn_version = true;
+                post(e->achievement->title, e->achievement->description);
+            }
+            break;
+        }
         snprintf(detail, sizeof(detail), tr("%s  (%u points)"), e->achievement->description,
                  e->achievement->points);
         post(e->achievement->title, detail);
@@ -346,6 +385,7 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *c)
         break;
     case RC_CLIENT_EVENT_RESET:
         host_reset(); /* switching to hardcore restarts the game */
+        rc_client_reset(c); /* acknowledges it: until then rcheevos does not evaluate a single achievement */
         break;
     case RC_CLIENT_EVENT_SERVER_ERROR:
         post(tr("RetroAchievements error"), e->server_error->error_message);
@@ -424,7 +464,7 @@ static void RC_CCONV on_login(int result, const char *error, rc_client_t *c, voi
     (void)userdata;
     signed_in = result == RC_OK;
     if (signed_in)
-        post("RetroAchievements", tr("Signed in."));
+        post_ex("RetroAchievements", tr("Signed in."), true); /* the sound is for the unlocks */
     else
         post(tr("RetroAchievements sign-in failed"), error ? error : tr("check the token"));
 }
@@ -486,10 +526,9 @@ static void RC_CCONV on_game_loaded(int result, const char *error, rc_client_t *
     (void)userdata;
     if (result != RC_OK)
     {
-        if (result == RC_NO_GAME_LOADED) /* "Unknown game": this dump's hash isn't in any set */
-            post("RetroAchievements", tr("This version of the game isn't supported. A Redump dump of your disc usually is."));
-        else
-            SwanStationPS5_log("ra: no achievements loaded: %s", error ? error : "?");
+        /* "Unknown game" (RC_NO_GAME_LOADED): this dump's hash is in no set, as with a homebrew or a copy that is not a
+         * Redump one. Nothing is shown: only the games RetroAchievements knows get a notice. */
+        SwanStationPS5_log("ra: no achievements loaded: %s", error ? error : "?");
         return;
     }
     const rc_client_game_t *g = rc_client_get_game_info(c);
@@ -502,7 +541,7 @@ static void RC_CCONV on_game_loaded(int result, const char *error, rc_client_t *
                  hardcore ? tr(" (hardcore)") : "");
     else
         snprintf(detail, sizeof(detail), tr("%s has no achievements yet"), g ? g->title : tr("This game"));
-    post("RetroAchievements", detail);
+    post_ex("RetroAchievements", detail, true); /* the game just opened: the sound is for the unlocks */
 }
 
 /* The image rcheevos reads when the core can't hand it sectors: the first
@@ -561,6 +600,7 @@ void ra_game_unloaded(void)
     if (!client)
         return;
     rc_client_unload_game(client);
+    warn_emulator = warn_version = false;
     if (regions_ready)
         rc_libretro_memory_destroy(&regions);
     regions_ready = false;
@@ -596,7 +636,7 @@ const char *ra_user(void)
 
 bool ra_hardcore(void)
 {
-    return client && hardcore;
+    return client && rc_client_get_hardcore_enabled(client); /* rcheevos can turn it off itself */
 }
 
 void ra_use_token(const char *name, const char *new_token)
@@ -623,6 +663,15 @@ void ra_set_hardcore(bool on)
         rc_client_set_hardcore_enabled(client, on ? 1 : 0);
     if (user[0])
         save_ini();
+    if (on)
+        warn_hardcore_not_counted(); /* turned on after the game's notice came */
+}
+
+bool ra_warning(bool *emulator, bool *version)
+{
+    *emulator = warn_emulator;
+    *version = warn_version;
+    return warn_emulator || warn_version;
 }
 
 void ra_game_summary(char *out, size_t size)

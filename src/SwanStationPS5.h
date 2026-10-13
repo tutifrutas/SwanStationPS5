@@ -9,6 +9,7 @@
 #define SwanStationPS5_H
 
 #include <stdbool.h>
+#include "core/bios_choices.h"
 #include "core/swanstation_options.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -16,7 +17,7 @@
 #define SwanStationPS5_NAME "SwanStationPS5"           /* identifiers: the User-Agent of network requests, the Vulkan application name */
 #define SwanStationPS5_TITLE "SwanStationPS5" /* what is shown on screen */
 #define SwanStationPS5_TITLE_ID "PPSA98510"
-#define SwanStationPS5_VERSION "1.1.9"
+#define SwanStationPS5_VERSION "1.2.8"
 #define SwanStationPS5_PATH_MAX 512
 
 /* Pad bits use RetroPad numbering so the host can hand the mask to the core
@@ -61,17 +62,6 @@ typedef struct
     int16_t mouse_dx, mouse_dy;
 } PadState;
 
-enum AspectMode
-{
-    ASPECT_AUTO = 0, /* what the game/core reports (normally 4:3) */
-    ASPECT_4_3,
-    ASPECT_16_9,     /* pair with a widescreen cheat for true widescreen */
-    ASPECT_16_10,
-    ASPECT_PIXEL,    /* 1:1 square pixels */
-    ASPECT_STRETCH,  /* fill the whole screen */
-    ASPECT_COUNT
-};
-
 enum UpscaleFilter
 {
     UPSCALE_SHARP = 0, /* nearest-neighbour prescale: crisp pixels */
@@ -90,7 +80,6 @@ enum RegionMode
 
 typedef struct
 {
-    int aspect;       /* enum AspectMode */
     bool integer_scale; /* whole-number scale factors only */
     bool smooth;      /* bilinear for the final scale to the screen */
     int renderer;     /* SwanStation: 0 Vulkan (the GPU), 1 Software (the CPU) */
@@ -133,6 +122,7 @@ typedef struct
     bool ra_popups;       /* achievement unlock banners while playing */
     bool ra_tracker;      /* the progress card when a counted achievement moves */
     int ra_popup_style;   /* 0 banner, 1 compact, 2 big trophy */
+    int bios_start;       /* Start BIOS boots this region's BIOS: 0 NTSC-U (default), 1 NTSC-J, 2 PAL; not saved */
     int lightbar;         /* 0 left to the system, 1 player colours, 2 the game's cover colour, 3 red in analog mode / off in digital */
     int stick_deadzone;   /* 0 off, 1..4: 5, 10, 15, 20 % of the stick's travel ignored */
     int stick_response;   /* 0 normal, 1 precise (slow near the centre), 2 quick */
@@ -157,15 +147,18 @@ typedef struct
     bool boot_intro;      /* the PS1's startup logo and sound before the game (a real BIOS) */
     int sharpen;          /* 0 off, 1 light, 2 strong (AMD FidelityFX CAS) */
     bool disc_animation;  /* the disc slides out of its case when a game starts */
+    bool disc_install_only; /* a disc put in is installed but its game is not started (the disc daemon does not open the app) */
+    bool case_lighting;   /* the cover in the jewel case gets light: its shading and the glare over the lid; off: the picture as it is */
+    bool jewel_cases;     /* the shelf shows 3D jewel cases; off: the flat covers with a reflection, as in 1.1.8 */
     bool negcon;          /* racing games that take a NeGcon: analog gas and brake on R2 / L2 */
     bool touch_mouse;     /* mouse games: the touchpad moves the pointer */
     int run_ahead;        /* 0 off, 1 or 2 frames less input lag */
     bool fast_effects;    /* screen effects on the GPU, without the software copy */
     bool fsr;             /* FSR 1 scales the picture before the shader */
-    int output_res;       /* the screen output: 0 1080p, 1 1440p, 2 4K */
     char usb_folder[48];  /* a folder name looked for on USB drives: /mnt/usb0/<name> and /mnt/usb1/<name> (empty: none) */
     char nfs_shares[512]; /* nfs:// addresses separated by ';' or new lines (empty: none); src/nfs/ps5_nfs.h */
     bool framegen;        /* frame interpolation: a frame between two of the game's (120 Hz screen, from the next start) */
+    int aspect_before_wide; /* the aspect ratio (index) the widescreen hack replaced with 16:9, or -1; saved by value */
     int ss_opt[SS_OPT_COUNT]; /* SwanStation's own core options: the chosen value's index in SS_OPTS[i].values */
 } Settings;
 
@@ -180,7 +173,7 @@ enum StickDpad
 enum CoverStyle
 {
     COVER_FLAT = 0, /* front art, shown in perspective by SwanStationPS5 */
-    COVER_BOX3D,    /* pre-rendered 3D jewel case */
+    /* COVER_BOX3D,    pre-rendered 3D jewel case (no longer used) */
     COVER_STYLE_COUNT
 };
 

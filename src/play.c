@@ -10,6 +10,7 @@
 #include "platform/platform.h"
 #include "i18n.h"
 #include "ra/achievements.h"
+#include "ui/coverflow.h"
 
 #include <SDL2/SDL.h>
 #include <ctype.h>
@@ -158,7 +159,7 @@ bool play_screenshot(void)
     char when[32] = "0";
     if (local_time((long long)time(NULL), &tm))
         strftime(when, sizeof(when), "%Y-%m-%d %H.%M.%S", &tm);
-    snprintf(name, sizeof(name), "%.100s %s.png", app.game->title, when);
+    snprintf(name, sizeof(name), "%.100s %s.png", shelf_game_title(app.game), when);
     for (char *c = name; *c; ++c)
         if (strchr("/\\:*?\"<>|", *c))
             *c = '-';
@@ -258,7 +259,7 @@ static bool save_state_to(const char *path, bool background);
 
 void play_save_resume(bool background)
 {
-    if (!app.game || !app.settings.quick_resume || ra_hardcore())
+    if (!app.game || game_is_bios(app.game) || !app.settings.quick_resume || ra_hardcore())
         return;
     char path[SwanStationPS5_PATH_MAX];
     play_resume_path(app.game, path, sizeof(path));
@@ -299,7 +300,7 @@ int play_auto_list(int slots[AUTO_SLOTS], long ages[AUTO_SLOTS])
 
 bool play_save_auto(void)
 {
-    if (!app.game || ra_hardcore())
+    if (!app.game || game_is_bios(app.game) || ra_hardcore())
         return false;
     int slots[AUTO_SLOTS];
     long ages[AUTO_SLOTS];

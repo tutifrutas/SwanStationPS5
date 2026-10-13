@@ -32,6 +32,10 @@ int covers_downloading(void);
 /* URL of a cover in xlenore/psx-covers (also used by tools/SwanStationPS5_sync.py). */
 void covers_url(char *out, size_t size, int style, const char *serial);
 
+/* The cover for a disc serial, from the cache or downloaded; RGBA to free(), NULL when there is none. It blocks:
+ * call it from a thread. The file stays in the cache, so the shelf finds it when the game is added. */
+uint8_t *covers_for_serial(const char *serial, int *w, int *h);
+
 /* Forgets game `index`'s cover so it is looked up again (after a pick). */
 void covers_reload(int index);
 /* Where picked covers are kept: <root>/covers/custom/<game id>.<ext> */

@@ -27,6 +27,14 @@ float case3d_max_pitch(void);
  * the hinge, `spin` (radians) turns the CD on its tray. */
 void case3d_launch(float open, float spin);
 
+/* Whether the cover gets light (its shading and the glare over the lid's plastic); off: the picture as it is. The rest of
+ * the case and the CD keep theirs. Stays until changed. */
+void case3d_lighting(bool on);
+
+/* How dark the patch of a case's contact shadow on the floor is (a case with a reflection has it): 1 as it is, less is more
+ * transparent, 0 none. Stays until changed. */
+void case3d_floor_shadow(float strength);
+
 /* The next case drawn lights its cover sheet like matte paper (plain diffuse light from the light point of the plastic's
  * glare: it darkens as it turns from the light, no shine): for the picture shown for games without a cover. */
 void case3d_matte(bool on);

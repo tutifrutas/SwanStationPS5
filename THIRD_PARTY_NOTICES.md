@@ -22,6 +22,16 @@
 | [sodaraptor: Hypnagogia 無限の夢 Boundless Dreams Jewel Case](https://sketchfab.com/3d-models/hypnagogia-boundless-dreams-jewel-case-20e4780167b6441fb364060c79870378) | The 3D jewel case of the shelf (`assets/psx_case_NTSC.obj` and the textures made from its atlases by `tools/make_case_textures.py`), CC-BY 4.0; each game's cover replaces the printed art |
 | [mpereiraesaa/PS5-Lapy-JB-Daemon](https://github.com/mpereiraesaa/PS5-Lapy-JB-Daemon) | Exact-title one-shot helper and cooperative elevation protocol |
 
+## Emulation cores shipped
+
+SwanStationPS5 ships **one** emulation core:
+
+| Core | Upstream | License | Notes |
+| --- | --- | --- | --- |
+| SwanStation (libretro) | [libretro/swanstation](https://github.com/libretro/swanstation), a fork of [DuckStation](https://github.com/stenzek/duckstation) | GPL-3.0 (`third_party/swanstation/LICENSE`) | PlayStation 1. Built from source into the app |
+
+No other core is included, and no non-commercial-licensed core is shipped. SwanStationPS5 is free and has no paid features, ads or in-app purchases.
+
 ## Native build dependencies
 
 The application build uses LLVM/Clang/lld, zlib 1.3.2, and the public
@@ -168,6 +178,7 @@ No proprietary runtime module, encryption key, or game file is included.
 | [NTSC shaders](https://github.com/libretro/slang-shaders) (ntsc/shaders/maister) by Hans-Kristian Arntzen (Themaister) | the four NTSC presets (320px / 256px, S-Video / composite), compiled to SPIR-V by `tools/make-ntsc.py` (`third_party/ntsc`) | see the libretro/slang-shaders repository (license to be confirmed) |
 | [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) (EASU and RCAS), in the libretro [slang-shaders](https://github.com/libretro/slang-shaders) port (`edge-smoothing/fsr`) | the FSR 1 shader, compiled to SPIR-V by `tools/make-ntsc.py` (`third_party/fsr`) | MIT (AMD's headers in `third_party/fsr/shaders`), Unlicense (the port) |
 | Frame interpolation from [PS5SX2](https://github.com/Swordpdf/PS5SX2) by Swordpdf (from his RPCS3-PS5 / ps5-framegen), as integrated in [PSXS5](https://github.com/SynoPiia/PSXS5) by SynoPiia | frame interpolation on Vulkan (`third_party/framegen`, built by `tools/build-framegen.sh`) | GPL-3.0-or-later |
+| [ps-disc-detect](https://github.com/Al-Azif/ps-disc-detect) by Al-Azif, and the disc code of [PS5SX2](https://github.com/Swordpdf/PS5SX2) by Swordpdf (itself based on a PR by Heyde Moura) | the way the disc installation reaches the CD drive through CAM and dumps a CD to `.bin`/`.cue` (`src/cdscsi.c`, `src/discimport.c`, and the disc daemon payload, `payload/discd.c`, which starts the app the way PS5SX2's `disc_launch.c` does; written for SwanStationPS5 following their approach) | GPL-3.0 / GPL-3.0-or-later |
 | [AMD FidelityFX SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) 2.3.0 (FSR 3 optical flow and frame interpolation) | the frame interpolation shaders (`third_party/framegen/framegen`) | MIT (`third_party/framegen/framegen/LICENSE.txt`) |
 
 ## 3D jewel case

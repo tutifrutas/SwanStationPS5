@@ -374,9 +374,11 @@ static float launch_open, launch_spin;
 static bool launch_on;
 static float lid_c = 1.0f, lid_s, disc_c = 1.0f, disc_s;
 static float draw_cx, draw_scale = 1.0f; /* the case being drawn: its centre on the screen and px per model unit */
+static bool lighting_on = true;                  /* case3d_lighting: the cover's light */
+static float floor_shadow_strength = 1.0f;       /* case3d_floor_shadow: how dark the patch under the case is */
 static bool matte_next, matte;           /* the cover sheet is lit like paper (case3d_matte): taken by the next draw only */
 
-#define LID_OPEN 1.9199f    /* the lid's full swing, radians: 110 degrees */
+#define LID_OPEN 2.2689f    /* the lid's full swing, radians: 130 degrees */
 #define HINGE_Z 1.64f       /* the hinge's axis: the lid's middle, at the case's left edge */
 #define DISC_CX 2.156f      /* the CD's centre in the model, and its radii */
 #define DISC_CY (-0.054f)
@@ -526,7 +528,7 @@ static void draw_part(int part, const Pt *pts, PlatTexture *cover, uint32_t tint
     {
         const Face *f = &m->faces[order[i]];
         /* the pictures carry their own light: a little shading keeps the case's volume */
-        const float k = 0.62f + 0.38f * shade[i];
+        const float k = lighting_on || part != PART_PROMO ? 0.62f + 0.38f * shade[i] : 1.0f;
         uint32_t rgb = shade_color(k, tex ? 0xffffffu : base);
         rgb = (uint32_t)(((rgb >> 16) & 0xff) * tr) << 16 | (uint32_t)(((rgb >> 8) & 0xff) * tg) << 8 |
               (uint32_t)((rgb & 0xff) * tb);
@@ -537,7 +539,8 @@ static void draw_part(int part, const Pt *pts, PlatTexture *cover, uint32_t tint
         float side[3] = {0.0f, 0.0f, 0.0f};
         /* lit like matte paper: the cover sheet with the picture of a game without a cover, and all that the open lid shows
          * (the lid's back, the tray's inside) */
-        const bool paper_lit = plain || (matte && part == PART_PROMO) || (show_inside && f->inside);
+        const bool paper_lit = plain || (matte && part == PART_PROMO) || (show_inside && f->inside) ||
+                              part == PART_DISC_TOP || part == PART_DISC_BOTTOM; /* the CD takes the light too */
         if (paper_lit)
         {
             const Pt *pa = &pts[f->v[0]], *pb = &pts[f->v[1]], *pc = &pts[f->v[2]];
@@ -589,7 +592,7 @@ static void draw_part(int part, const Pt *pts, PlatTexture *cover, uint32_t tint
                 float dx = (LIGHT_SCREEN_X - draw_cx) / draw_scale - pp->x, dy = LIGHT_HEIGHT - pp->y, dz = LIGHT_DEPTH - pp->z;
                 const float dl = sqrtf(dx * dx + dy * dy + dz * dz);
                 const float lambert = fmaxf((side[0] * dx + side[1] * dy + side[2] * dz) / dl, 0.0f);
-                const float kk = fminf(0.42f + 0.62f * lambert, 1.0f);
+                const float kk = lighting_on || part != PART_PROMO ? fminf(0.42f + 0.62f * lambert, 1.0f) : 1.0f;
                 q[v].argb = alpha | (uint32_t)(255.0f * kk * tr) << 16 | (uint32_t)(255.0f * kk * tg) << 8 | (uint32_t)(255.0f * kk * tb);
             }
             if (mirror)
@@ -709,7 +712,7 @@ static void draw_sheet(const Sheet *sh, float cx, float cy, float scale, float a
             const float du = (ex * uh[0] + ey * uh[1] + ez * uh[2]) / sh->sigma_u;
             const float dv = (ex * vh[0] + ey * vh[1] + ez * vh[2]) / sh->sigma_v;
             const float glare = expf(-(du * du + dv * dv));
-            const float soft = 0.10f * expf(-(ex * ex + ey * ey + ez * ez) * 4.0f);
+            const float soft = 0.03f * expf(-(ex * ex + ey * ey + ez * ez) * 4.0f);
             float al = (glare * sh->peak + soft + sh->sheen) * alpha;
             PlatVertex *q = &grid[j * (COLS + 1) + i];
             float persp = VIEW_DISTANCE / (VIEW_DISTANCE - pz);
@@ -765,8 +768,9 @@ static void draw_plastic(float cx, float cy, float scale, float alpha)
 
     /* the shine of the light point over the lid */
     const Sheet lid = {{0, 0, FRONT_Z + 0.02f}, {case_w * 0.5f, 0, 0}, {0, case_h * 0.5f, 0}, {0, 0, 1},
-                       0.90f, 0.24f, 0.30f, 0.0f, true};
-    draw_sheet(&lid, cx, cy, scale, alpha);
+                       0.90f, 0.24f, 0.08f, 0.0f, true};
+    if (lighting_on)
+        draw_sheet(&lid, cx, cy, scale, alpha);
 }
 
 /* The game's cover under the CD's printed ring: a flat ring on the disc's face, turning with it, showing the middle
@@ -779,6 +783,11 @@ static void draw_disc_cover(PlatTexture *cover, uint32_t tint, float cx, float c
         plat_texture_size(cover, &tw, &th);
     const float ux = tw > th ? (float)th / tw : 1.0f, uy = th > tw ? (float)tw / th : 1.0f;
     const uint32_t argb = cover ? (tint | 0xff000000u) : (0xff000000u | (part_colors[PART_PROMO] & 0xffffffu));
+    const float tr = ((argb >> 16) & 0xff) / 255.0f, tg = ((argb >> 8) & 0xff) / 255.0f, tb = (argb & 0xff) / 255.0f;
+    /* the CD's face is lit by the same light as the rest of the inside of the case (it is flat: its normal is the tray's) */
+    float nx, ny, nz;
+    turn_point(0.0f, 0.0f, 1.0f, &nx, &ny, &nz);
+    const float lx = (LIGHT_SCREEN_X - draw_cx) / draw_scale, ly = LIGHT_HEIGHT, lz = LIGHT_DEPTH;
     const float radii[2] = {DISC_HUB, DISC_R - 0.3f};
     static PlatVertex ring[2][SEG + 1], tris[SEG * 6];
     for (int i = 0; i <= SEG; ++i)
@@ -791,9 +800,14 @@ static void draw_disc_cover(PlatTexture *cover, uint32_t tint, float cx, float c
             disc_point(x, y, DISC_TOP_Z - 0.006f, &mx, &my, &mz);
             turn_point(mx, my, mz, &px, &py, &pz);
             const float persp = VIEW_DISTANCE / (VIEW_DISTANCE - pz);
+            const float dx = lx - px, dy = ly - py, dz = lz - pz, dl = sqrtf(dx * dx + dy * dy + dz * dz);
+            const float lambert = fmaxf((nx * dx + ny * dy + nz * dz) / dl, 0.0f);
+            const float kk = fminf(0.42f + 0.62f * lambert, 1.0f);
+            const uint32_t lit = (argb & 0xff000000u) | (uint32_t)(255.0f * kk * tr) << 16 |
+                                 (uint32_t)(255.0f * kk * tg) << 8 | (uint32_t)(255.0f * kk * tb);
             ring[r][i] = (PlatVertex){cx + px * scale * persp, cy - py * scale * persp,
                                       0.5f + (x - DISC_CX) / DISC_R * 0.5f * ux, 0.5f - (y - DISC_CY) / DISC_R * 0.5f * uy,
-                                      argb};
+                                      lit};
         }
     }
     int n = 0;
@@ -809,11 +823,162 @@ static void draw_disc_cover(PlatTexture *cover, uint32_t tint, float cx, float c
     plat_draw_mesh(cover, tris, n, NULL, 0);
 }
 
+/* The CD's metallic shine over its (paper-like) light: a specular highlight where the light bounces to the camera, a little
+ * stronger along the light's own axis (the tracks are brushed metal). Blended white (there is no additive blending); the
+ * highlight stays where the light puts it, the disc spinning does not move it. */
+#define GLOSS_ALPHA 0.30f /* the highlight at its brightest: the share of white over the disc */
+
+static void draw_disc_gloss(uint32_t tint, float cx, float cy, float scale)
+{
+    enum { SEG = 72, RINGS = 5 };
+    const uint32_t tint_a = tint >> 24;
+    if (tint_a == 0)
+        return;
+    float nx, ny, nz;
+    turn_point(0.0f, 0.0f, 1.0f, &nx, &ny, &nz);
+    const float lx = (LIGHT_SCREEN_X - draw_cx) / draw_scale, ly = LIGHT_HEIGHT, lz = LIGHT_DEPTH;
+    float ccx, ccy, ccz;
+    turn_point(DISC_CX, DISC_CY, DISC_TOP_Z, &ccx, &ccy, &ccz);
+    const float light_angle = atan2f(ly - ccy, lx - ccx);
+    static PlatVertex ring[RINGS][SEG + 1], tris[SEG * (RINGS - 1) * 6];
+    for (int i = 0; i <= SEG; ++i)
+    {
+        const float a = 6.2831853f * (float)i / SEG;
+        /* brushed: brighter along the light's axis than across it */
+        const float along = 0.7f + 0.3f * cosf(2.0f * (a - light_angle));
+        for (int r = 0; r < RINGS; ++r)
+        {
+            const float rad = DISC_HUB + (DISC_R - 0.3f - DISC_HUB) * (float)r / (RINGS - 1);
+            const float x = DISC_CX + cosf(a) * rad, y = DISC_CY + sinf(a) * rad;
+            float px, py, pz;
+            turn_point(x, y, DISC_TOP_Z - 0.012f, &px, &py, &pz);
+            const float persp = VIEW_DISTANCE / (VIEW_DISTANCE - pz);
+            /* half-way between the light and the camera */
+            float hx = (lx - px) / 1.0f, hy = ly - py, hz = lz - pz;
+            const float hl = sqrtf(hx * hx + hy * hy + hz * hz);
+            hx /= hl, hy /= hl, hz /= hl;
+            float vx = -px, vy = -py, vz = VIEW_DISTANCE - pz;
+            const float vl = sqrtf(vx * vx + vy * vy + vz * vz);
+            hx += vx / vl, hy += vy / vl, hz += vz / vl;
+            const float h2 = sqrtf(hx * hx + hy * hy + hz * hz);
+            const float nh = h2 > 1e-6f ? fmaxf((nx * hx + ny * hy + nz * hz) / h2, 0.0f) : 0.0f;
+            float k = powf(nh, 14.0f) * along * GLOSS_ALPHA;
+            k = k > GLOSS_ALPHA ? GLOSS_ALPHA : k;
+            const uint32_t ca = (uint32_t)(255.0f * k * tint_a / 255.0f);
+            ring[r][i] = (PlatVertex){cx + px * scale * persp, cy - py * scale * persp, 0.0f, 0.0f, ca << 24 | 0xffffffu};
+        }
+    }
+    int n = 0;
+    for (int i = 0; i < SEG; ++i)
+        for (int r = 0; r < RINGS - 1; ++r)
+        {
+            tris[n++] = ring[r][i];
+            tris[n++] = ring[r + 1][i];
+            tris[n++] = ring[r + 1][i + 1];
+            tris[n++] = ring[r][i];
+            tris[n++] = ring[r + 1][i + 1];
+            tris[n++] = ring[r][i + 1];
+        }
+    plat_draw_mesh(NULL, tris, n, NULL, 0);
+}
+
+#if 0 /* the disc shader (rainbow spokes), taken out */
+/* hue 0..1 (full saturation, a little washed out towards white) to RGB bytes */
+static uint32_t rainbow(float hue)
+{
+    hue -= floorf(hue);
+    const float h6 = hue * 6.0f, f = h6 - floorf(h6);
+    float r = 0, g = 0, b = 0;
+    switch ((int)h6 % 6)
+    {
+    case 0: r = 1; g = f; break;
+    case 1: r = 1 - f; g = 1; break;
+    case 2: g = 1; b = f; break;
+    case 3: g = 1 - f; b = 1; break;
+    case 4: r = f; b = 1; break;
+    default: r = 1; b = 1 - f; break;
+    }
+    const float w = 0.2f; /* washed out */
+    return (uint32_t)(255.0f * (r + (1.0f - r) * w)) << 16 | (uint32_t)(255.0f * (g + (1.0f - g) * w)) << 8 |
+           (uint32_t)(255.0f * (b + (1.0f - b) * w));
+}
+
+/* The disc's shine: a CD's tracks split the light into colours, seen as bright rainbow spokes that run out from the hub
+ * towards (and away from) the light. They stay where the light puts them (the disc spinning does not move them) and
+ * follow the case as it turns. Drawn as blended colour over the face (there is no additive blending). */
+#define SHEEN_ALPHA 0.06f /* the spokes at their brightest: the share of their colour over the disc (a tenth of the first try) */
+
+static void draw_disc_sheen(uint32_t tint, float cx, float cy, float scale)
+{
+    enum { SEG = 180, RINGS = 3 };
+    const uint32_t tint_a = tint >> 24;
+    if (tint_a == 0)
+        return;
+    float ccx, ccy, ccz, nx, ny, nz;
+    turn_point(DISC_CX, DISC_CY, DISC_TOP_Z, &ccx, &ccy, &ccz);
+    turn_point(0.0f, 0.0f, 1.0f, &nx, &ny, &nz);
+    const float lx = (LIGHT_SCREEN_X - draw_cx) / draw_scale - ccx, ly = LIGHT_HEIGHT - ccy, lz = LIGHT_DEPTH - ccz;
+    const float ll = sqrtf(lx * lx + ly * ly + lz * lz);
+    /* the more the disc faces the light, the brighter the shine */
+    const float facing = fminf(0.35f + 0.9f * fmaxf((nx * lx + ny * ly + nz * lz) / ll, 0.0f), 1.0f);
+    const float light_angle = atan2f(ly, lx);
+    const float radii[RINGS] = {DISC_HUB + 0.5f, 0.5f * (DISC_HUB + DISC_R), DISC_R - 0.3f};
+    const float radial[RINGS] = {0.25f, 1.0f, 0.7f}; /* fades near the hub, strong in the middle */
+    static PlatVertex ring[RINGS][SEG + 1], tris[SEG * (RINGS - 1) * 6];
+    for (int i = 0; i <= SEG; ++i)
+    {
+        const float a = 6.2831853f * (float)i / SEG;
+        /* the angle from the light's spoke (it runs both ways), and from a weaker second pair */
+        float d1 = fmodf(a - light_angle + 9.42477796f, 3.14159265f) - 1.57079633f; /* -pi/2..pi/2 about the spoke */
+        float d2 = fmodf(a - light_angle - 1.0f + 9.42477796f, 3.14159265f) - 1.57079633f;
+        const float w1 = 0.22f, w2 = 0.16f;
+        const float s1 = expf(-(d1 * d1) / (w1 * w1)), s2 = 0.45f * expf(-(d2 * d2) / (w2 * w2));
+        const float spoke = s1 > s2 ? s1 : s2;
+        const float hue_t = s1 >= s2 ? d1 / w1 : d2 / w2; /* the colour runs across the spoke */
+        const uint32_t rgb = rainbow(0.9f + 0.28f * hue_t);
+        for (int r = 0; r < RINGS; ++r)
+        {
+            const float x = DISC_CX + cosf(a) * radii[r], y = DISC_CY + sinf(a) * radii[r];
+            float px, py, pz;
+            turn_point(x, y, DISC_TOP_Z - 0.012f, &px, &py, &pz);
+            const float persp = VIEW_DISTANCE / (VIEW_DISTANCE - pz);
+            float k = SHEEN_ALPHA * spoke * radial[r] * facing;
+            k = k > SHEEN_ALPHA ? SHEEN_ALPHA : k;
+            const uint32_t ca = (uint32_t)(255.0f * k * tint_a / 255.0f);
+            ring[r][i] = (PlatVertex){cx + px * scale * persp, cy - py * scale * persp, 0.0f, 0.0f, ca << 24 | rgb};
+        }
+    }
+    int n = 0;
+    for (int i = 0; i < SEG; ++i)
+        for (int r = 0; r < RINGS - 1; ++r)
+        {
+            tris[n++] = ring[r][i];
+            tris[n++] = ring[r + 1][i];
+            tris[n++] = ring[r + 1][i + 1];
+            tris[n++] = ring[r][i];
+            tris[n++] = ring[r + 1][i + 1];
+            tris[n++] = ring[r][i + 1];
+        }
+    plat_draw_mesh(NULL, tris, n, NULL, 0);
+}
+#endif
+
 static void draw_disc(const Pt *pts, PlatTexture *cover, uint32_t tint, float cx, float cy, float scale)
 {
     draw_part(PART_DISC_BOTTOM, pts, cover, tint, NULL);
     draw_disc_cover(cover, tint, cx, cy, scale);
+    draw_disc_gloss(tint, cx, cy, scale);
     draw_part(PART_DISC_TOP, pts, cover, tint, NULL);
+}
+
+void case3d_lighting(bool on)
+{
+    lighting_on = on;
+}
+
+void case3d_floor_shadow(float strength)
+{
+    floor_shadow_strength = strength < 0.0f ? 0.0f : strength > 1.0f ? 1.0f : strength;
 }
 
 void case3d_matte(bool on)
@@ -845,6 +1010,8 @@ void case3d_draw(PlatTexture *cover, float cx, float cy, float h, float yaw, flo
     lid_s = sinf(launch_open * LID_OPEN);
     disc_c = cosf(launch_spin);
     disc_s = sinf(launch_spin);
+    /* past 90 degrees the lid lies out to the left of the hinge: the pair (case and lid) is kept centred where the case was
+    cx += 0.5f * case_w * scale * fmaxf(-lid_c, 0.0f); */
     draw_cx = cx;
     draw_scale = scale;
     matte = matte_next;
@@ -899,7 +1066,8 @@ void case3d_draw(PlatTexture *cover, float cx, float cy, float h, float yaw, flo
         draw_part(PART_INNER, mirrored, cover, tint, &mirror);
         draw_part(PART_PROMO, mirrored, cover, tint, &mirror);
         draw_part(PART_FRONT, mirrored, cover, tint, &mirror);
-        draw_contact_shadow(c, s, cx, cy, scale, alpha);
+        if (floor_shadow_strength > 0.0f)
+            draw_contact_shadow(c, s, cx, cy, scale, alpha * floor_shadow_strength);
     }
     draw_part(PART_BACK, pts, cover, tint, NULL);
     draw_part(PART_INNER, pts, cover, tint, NULL);

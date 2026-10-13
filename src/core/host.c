@@ -195,6 +195,13 @@ static void register_variables(const struct retro_variable *vars)
 #if defined(SwanStationPS5_VULKAN)
 /* SwanStation (DuckStation): the Vulkan renderer, the recompiler with LUT
  * fastmem (MMap does not survive a title's sandbox). */
+static const char *region_override;
+
+void host_set_region_override(const char *region)
+{
+    region_override = region;
+}
+
 static void apply_swanstation_options(const Settings *s)
 {
     static const char *const regions[] = {"Auto", "NTSC-U", "PAL"};
@@ -205,7 +212,7 @@ static void apply_swanstation_options(const Settings *s)
     bool pgxp = s->pgxp && !(game_fixes & GDB_NO_PGXP);
     set_option("swanstation_GPU_Renderer", session_renderer == 1 ? "Software" : "Vulkan");
     set_option("swanstation_GPU_ResolutionScale", scales[level - 1]);
-    set_option("swanstation_Console_Region", regions[s->region % REGION_COUNT]);
+    set_option("swanstation_Console_Region", region_override ? region_override : regions[s->region % REGION_COUNT]);
     set_option("swanstation_GPU_TrueColor", s->true_colour ? "true" : "false");
     set_option("swanstation_GPU_PGXPEnable", pgxp ? "true" : "false");
     set_option("swanstation_BIOS_PatchFastBoot", s->boot_intro ? "false" : "true");
@@ -214,7 +221,7 @@ static void apply_swanstation_options(const Settings *s)
     for (int i = 0; i < SS_OPT_COUNT; ++i)
     {
         int v = s->ss_opt[i];
-        const char *value = SS_OPTS[i].values[v >= 0 && v < SS_OPTS[i].count ? v : SS_OPTS[i].def];
+        const char *value = ss_opt_value(i, v);
         if (!strcmp(SS_OPTS[i].key, "swanstation_Display_ShowOSDMessages"))
         {
             /* the core always says its messages (the light bar follows the analog mode by them); whether they are
@@ -893,6 +900,8 @@ static int card_check;
 static void card_prepare(const char *serial, const char *game_path)
 {
     card_path[0] = '\0';
+    if (!game_path[0])
+        return; /* the BIOS with no disc: no card of a game to load or write back */
     char name[200], path[SwanStationPS5_PATH_MAX];
     if (serial[0])
         snprintf(name, sizeof(name), "%s_1.mcd", serial);
@@ -952,6 +961,9 @@ static char disc_path[SwanStationPS5_PATH_MAX];
 static void disc_prepare(const char *serial, const char *game_path)
 {
     char name[200];
+    disc_path[0] = '\0';
+    if (!game_path[0])
+        return;
     if (serial[0])
         snprintf(name, sizeof(name), "%.150s", serial);
     else
@@ -979,8 +991,26 @@ static void disc_remember(void)
     fclose(f);
 }
 
+static int forced_disc = -1;
+
+void host_set_initial_disc(int index)
+{
+    forced_disc = index;
+}
+
 static void disc_restore(const char *game_path)
 {
+    const int forced = forced_disc;
+    forced_disc = -1; /* for one load only */
+    if (forced >= 0 && disk_available && disk.set_initial_image)
+    {
+        if (forced > 0)
+        {
+            disk.set_initial_image((unsigned)forced, game_path);
+            SwanStationPS5_log("host: starting on disc %d (the one put in)", forced + 1);
+        }
+        return;
+    }
     if (!disc_path[0] || !disk_available || !disk.set_initial_image)
         return;
     FILE *f = fopen(disc_path, "r");

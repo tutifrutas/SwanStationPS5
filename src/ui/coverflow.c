@@ -32,6 +32,7 @@
 #include "stb_image.h"
 
 #include <dirent.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,7 +52,8 @@
 #define NUDGE_SPEED 4.2f /* the knock a left or right press gives the case, radians per second (a spring brings it back) */
 #define SIDE_YAW 0.45f   /* the jewel cases beside the selected one turn towards it (radians) */
 #define SIDE_SQUEEZE 1.0f /* the covers beside the selected one keep their width */
-#define LAUNCH_TIME 0.3f /* the fade to black */
+#define LAUNCH_TIME 0.5f /* the fade to black */
+#define DELETE_HOLD 2.0f /* seconds Triangle is held in Details to delete the game's files */
 #define QUIT_HOLD 2.0f   /* seconds O is held on the shelf to close the app */
 #define DISC_TIME 0.95f  /* before it, with the disc animation: the disc slides out and spins up */
 #define CASE_DISC_TIME 2.4f /* the same with the 3D cases: the lid opens and the CD spins up on its tray */
@@ -79,9 +81,11 @@ static struct
     bool buzz_locked; /* it buzzed already: not again until the direction is let go (holding it auto-repeats) */
     float nudge, nudge_v; /* a knock to the left or right, as if the right stick had been flicked: on a spring */
     bool details;
-    float details_t, launch_t, quit_hold;
+    float details_t, launch_t, quit_hold, delete_hold;
+    bool delete_armed; /* Triangle was pressed with Details already open: not the press that opened it */
     bool starting; /* the launch is over: this frame shows "Loading", the next one loads */
-    float chip_x, chip_w; /* animated category highlight */
+    float chip_x, chip_w; /* animated category highlight (from the start of the row of chips) */
+    float chips_scroll;   /* how far the row of chips has slid to the left to keep the chosen one in view */
     float tint[3];        /* animated background colour */
     float title_fade;     /* text fades in after a move */
     int last_cursor_game;
@@ -91,10 +95,23 @@ static struct
     float dialog_t;
     long resume_age;
     PlatTexture *resume_thumb;
+    char filter[48]; /* what the shelf is filtered by (R1): name, folder or serial of any game, whatever the category */
 } S;
 
+/* The small keyboard R1 opens: what is typed filters the shelf at once */
+#define FILTER_MAX 47
+static struct
+{
+    bool open;
+    char text[FILTER_MAX + 1];
+    char before[FILTER_MAX + 1]; /* the filter when it opened: Back goes back to it */
+    int before_category;         /* and the category: opening the filter shows all the games */
+    int row, col; /* row FILTER_ROWS is Space (col 0) and Apply (col 1) */
+    bool shift, symbols;
+} F;
+
 static const char *const CATEGORY_NAMES[CAT_COUNT] = {
-    "All games", "Recently played", "Favorites", "Multi-disc", "USA", "Europe", "Japan", "2+ players", "Hidden"};
+    "All games", "Recently played", "Favorites", "Multi-disc", "USA", "Europe", "Japan", "2+ players"};
 static const char *const SORT_NAMES[SORT_COUNT] = {"Title", "Recently played", "Most played",
                                                    "Region"};
 
@@ -126,11 +143,8 @@ const char *shelf_region_name(const char *serial)
 static bool in_category(const Game *g, int category)
 {
     GameStats *st = stats_get(g->id);
-    if (st && st->hidden) /* hidden games are only under Hidden */
-        return category == CAT_HIDDEN;
     switch (category)
     {
-    case CAT_HIDDEN: return false;
     case CAT_RECENT: return st && st->last_played > 0;
     case CAT_FAVORITES: return st && st->favorite;
     case CAT_MULTI_DISC: return g->discs > 1;
@@ -190,6 +204,55 @@ static int compare(const void *pa, const void *pb)
     return t ? t : (*(const int *)pa - *(const int *)pb);
 }
 
+static const char *display_title(const Game *g);
+
+/* Case-insensitive "contains" */
+static bool ci_contains(const char *hay, const char *needle)
+{
+    size_t n = strlen(needle);
+    if (!n)
+        return true;
+    for (; *hay; ++hay)
+    {
+        size_t k = 0;
+        while (k < n && hay[k] && tolower((unsigned char)hay[k]) == tolower((unsigned char)needle[k]))
+            ++k;
+        if (k == n)
+            return true;
+    }
+    return false;
+}
+
+/* Does the game match every word of the filter? Each word is looked for in the game's name (DuckStation's or the
+ * file's), in the name of the folder holding it, and in its serial (with or without the dash: SLUS00421). */
+static bool matches_filter(const Game *g, const char *filter)
+{
+    const char *folder = strrchr(g->folder, '/');
+    folder = folder ? folder + 1 : g->folder;
+    char serial[sizeof(g->serial)];
+    size_t n = 0;
+    for (const char *c = g->serial; *c && n + 1 < sizeof(serial); ++c)
+        if (*c != '-')
+            serial[n++] = *c;
+    serial[n] = '\0';
+    char word[FILTER_MAX + 1];
+    for (const char *p = filter; *p;)
+    {
+        while (*p == ' ')
+            ++p;
+        size_t w = 0;
+        while (*p && *p != ' ' && w < FILTER_MAX)
+            word[w++] = *p++;
+        word[w] = '\0';
+        if (!w)
+            break;
+        if (!ci_contains(display_title(g), word) && !ci_contains(g->title, word) && !ci_contains(folder, word) &&
+            !ci_contains(g->serial, word) && !ci_contains(serial, word))
+            return false;
+    }
+    return true;
+}
+
 static void build_view(int keep_game)
 {
     Settings *g = &app.global;
@@ -205,7 +268,8 @@ static void build_view(int keep_game)
     }
     S.view_count = 0;
     for (int i = 0; i < app.library.count; ++i)
-        if (in_category(&app.library.games[i], g->shelf_category))
+        if (S.filter[0] ? matches_filter(&app.library.games[i], S.filter) /* all the games, not the category's */
+                        : in_category(&app.library.games[i], g->shelf_category))
             S.view[S.view_count++] = i;
     sort_mode = g->shelf_category == CAT_RECENT ? SORT_RECENT : g->sort_mode;
     qsort(S.view, (size_t)S.view_count, sizeof(int), compare);
@@ -258,7 +322,6 @@ void shelf_init(int last_game)
     S.last_cursor_game = last_game;
     app.global.shelf_category = CAT_ALL; /* always starts on All, not on the category it was closed on */
     app.settings.shelf_category = CAT_ALL;
-    srand((unsigned)time(NULL)); /* the screensaver slideshow */
     S.tint[0] = 0x3a / 255.0f;
     S.tint[1] = 0x50 / 255.0f;
     S.tint[2] = 0xc8 / 255.0f;
@@ -311,6 +374,27 @@ static void make_backdrop(uint8_t *grey, int W, int H, int style, bool light)
                 v = light ? 0.99f - t * 0.05f : 0.42f - t * 0.08f;
                 v *= 1.0f - dx * dx * (light ? 0.02f : 0.12f);
                 break;
+            case BACKDROP_FLOOR:
+            {
+                /* dark, lighter, lighter, dark: the floor's fall (from the middle of the screen to the front) copied and
+                 * turned over to the top, so the top half is the bottom half upside down. The fall begins where the
+                 * farthest case of a full row touches the floor: the fifth beside the middle one is drawn at 0.39 of the
+                 * middle one's size and its base is at 0.58 of the screen's height (0.42 from the top, by the copy). A
+                 * band of 0.56 between, then no edge, down to a very dark grey (0.06) at the front and a dark grey (0.24) at the top */
+                const float horizon = 0.58f;
+                const float m = t < 0.5f ? 1.0f - t : t; /* the bottom half's position, for both halves */
+                if (m < horizon)
+                    v = 0.56f;
+                else
+                {
+                    float u = (m - horizon) / (1.0f - horizon);
+                    /* the floor goes down to 0.06; the top, the same fall but only to 0.24 (about what the tags stand on) */
+                    const float fall = t < 0.5f ? 0.32f : 0.50f;
+                    v = 0.56f - fall * (1.0f - powf(1.0f - u, 1.45f));
+                }
+                v *= 1.0f - dx * dx * 0.25f;
+                break;
+            }
             case BACKDROP_LAMP:
             {
                 /* a warm pool of light from a lamp above the shelf */
@@ -431,6 +515,12 @@ static PlatTexture *no_cover_icon(void)
     return icon;
 }
 
+/* The same picture for other screens (the install card of a disc with no cover). */
+PlatTexture *shelf_no_cover(void)
+{
+    return no_cover_icon();
+}
+
 /* width / height of the picture for games without a cover */
 static float no_cover_aspect(void)
 {
@@ -480,7 +570,7 @@ static void draw_cover_reflection(PlatTexture *tex, float x, float y, float w, f
 static bool shelf_cases(void)
 {
     return plat_gpu_ui_active() && theme.layout != LAYOUT_GRID && theme.layout != LAYOUT_SPINES &&
-           app.global.cover_style == COVER_FLAT && case3d_available();
+           app.global.jewel_cases && /* app.global.cover_style == COVER_FLAT && */ case3d_available();
 }
 
 static void draw_case(PlatTexture *tex, const Game *g, float cx, float cy, float h, float yaw, float pitch,
@@ -489,6 +579,8 @@ static void draw_case(PlatTexture *tex, const Game *g, float cx, float cy, float
     if (!tex && no_cover_icon())
         tex = no_cover_icon();
     const float w = h * case3d_aspect();
+    case3d_lighting(app.global.case_lighting);
+    case3d_floor_shadow(theme_current() == THEME_GRAYRAT ? 0.45f : 1.0f); /* Grayrat: a fainter patch on the floor */
     case3d_matte(tex == no_cover_icon()); /* the picture of a game without a cover is lit like paper */
     case3d_draw(tex, cx, cy, h, yaw, pitch, tint, reflections_on());
     if (selected)
@@ -508,9 +600,9 @@ static void draw_cover(PlatTexture *tex, const Game *g, float cx, float cy, floa
     float w = h * aspect * squeeze, x = cx - w * 0.5f, y = cy - h * 0.5f;
     if (selected)
     {
-        /* Classic and Neon Arcade: no shadow, glow or border around the selected cover (the other themes keep theirs) */
+        /* Classic, Neon Arcade and Grayrat: no shadow, glow or border around the selected cover (the other themes keep theirs) */
         int id = theme_current();
-        if (id != THEME_CLASSIC && id != THEME_NEON)
+        if (id != THEME_CLASSIC && id != THEME_NEON && id != THEME_GRAYRAT)
         {
             draw_rrect(x - 10, y + 14, w + 20, h + 6, 18, 0x60000000u); /* shadow */
             if (theme.backdrop == BACKDROP_GRID) /* a neon glow */
@@ -520,7 +612,7 @@ static void draw_cover(PlatTexture *tex, const Game *g, float cx, float cy, floa
     }
     if (tex) /* flat covers are opaque: a plain copy is much cheaper than blending */
     {
-        plat_draw_texture(tex, x, y, w, h, tint, app.global.cover_style == COVER_BOX3D);
+        plat_draw_texture(tex, x, y, w, h, tint, false /* app.global.cover_style == COVER_BOX3D */);
         if (reflections_on()) /* every cover, with the GPU interface only */
             draw_cover_reflection(tex, x, y, w, h, tint);
     }
@@ -537,6 +629,36 @@ static void draw_cover(PlatTexture *tex, const Game *g, float cx, float cy, floa
     }
     if (selected)
         draw_ach_badge(g, x + w, y + h, 20);
+}
+
+/* One sentence in at most two lines of width `maxw`: broken at a space or after a Japanese full stop, as late as fits.
+ * Returns how many lines (1 or 2); `b` is empty for one. */
+static int split_two_lines(float size, int weight, float maxw, const char *s, char *a, char *b, size_t n)
+{
+    str_copy(a, n, s);
+    b[0] = '\0';
+    if (text_width(size, weight, s) <= maxw)
+        return 1;
+    size_t best = 0, len = strlen(s);
+    char probe[256];
+    for (size_t i = 1; i < len && i < sizeof(probe) - 1; ++i)
+    {
+        bool at_space = s[i] == ' ';
+        bool after_stop = i >= 3 && (unsigned char)s[i - 3] == 0xe3 && (unsigned char)s[i - 2] == 0x80 &&
+                          (unsigned char)s[i - 1] == 0x82; /* the Japanese full stop */
+        if (!at_space && !after_stop)
+            continue;
+        memcpy(probe, s, i);
+        probe[i] = '\0';
+        if (text_width(size, weight, probe) <= maxw)
+            best = i;
+    }
+    if (!best)
+        return 1;
+    memcpy(a, s, best);
+    a[best] = '\0';
+    str_copy(b, n, s + best + (s[best] == ' ' ? 1 : 0));
+    return 2;
 }
 
 static void draw_details(const Game *g, float t)
@@ -636,10 +758,16 @@ static void draw_details(const Game *g, float t)
         icon_draw(ICON_INFO_CIRCLE, x + 40, ty + 2, 24, argb_alpha(TH_GOLD, t));
         text_draw_fit(x + 76, ty, 19, FONT_REGULAR, argb_alpha(TH_TEXT_SOFT, t), ALIGN_LEFT, w - 116, tips[i]);
     }
+    const char *pick = tr("Choose a cover");
     if (t > 0.5f)
         draw_pad_glyph(GLYPH_SQUARE, x + 54, y + h - 46, 28);
-    text_draw(x + 78, y + h - 58, 22, FONT_REGULAR, argb_alpha(TH_TEXT, t), ALIGN_LEFT,
-              tr("Choose a cover"));
+    text_draw(x + 78, y + h - 58, 22, FONT_REGULAR, argb_alpha(TH_TEXT, t), ALIGN_LEFT, pick);
+    /* beside it, on its right: Triangle held deletes the game's files */
+    const float next = x + 78 + text_width(22, FONT_REGULAR, pick) + 56; /* where the next button's glyph goes */
+    if (t > 0.5f)
+        draw_pad_glyph(GLYPH_TRIANGLE, next + 14, y + h - 46, 28);
+    text_draw_fit(next + 38, y + h - 58, 22, FONT_REGULAR, argb_alpha(TH_TEXT, t), ALIGN_LEFT,
+                  x + w - 24 - (next + 38), tr("Delete (hold)"));
 }
 
 /* Category chips along the top; the highlight slides between them. */
@@ -649,30 +777,75 @@ static void draw_header(void)
     text_draw(title_x, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, SwanStationPS5_TITLE);
     const float title_w = text_width(44, FONT_BOLD, SwanStationPS5_TITLE);
     text_draw(title_x + title_w + 14, 56, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, "v" SwanStationPS5_VERSION);
-    float x = title_x + title_w + 14 + text_width(22, FONT_REGULAR, "v" SwanStationPS5_VERSION) + 40, y = 46, h = 46;
+    const float x0 = title_x + title_w + 14 + text_width(22, FONT_REGULAR, "v" SwanStationPS5_VERSION) + 40, y = 46,
+                h = 46;
+    /* R1 Filter, top right: big, with no frame, so it is not missed. The chips have the room up to it. */
+    const int filter_pad[1] = {GLYPH_R1};
+    const char *filter_msg = tr("Filter");
+    const float filter_w = hint_combo_width(filter_pad, 1, filter_msg, 30);
+    const float view_w = plat_width() - TH_MARGIN - filter_w - 40 - x0;
+
+    /* the chips laid out from 0; when they do not fit, the row slides like a carousel to keep the chosen one in view */
+    float cx[CAT_COUNT], cw[CAT_COUNT], pos = 0, sel_x = 0, sel_w = 0;
+    char labels[CAT_COUNT][64];
+    bool shown[CAT_COUNT];
     for (int c = 0; c < CAT_COUNT; ++c)
     {
         int n = category_size(c);
-        if (c != CAT_ALL && n == 0)
+        shown[c] = c == CAT_ALL || n > 0;
+        if (!shown[c])
             continue;
-        char label[64];
         if (c == CAT_ALL)
-            snprintf(label, sizeof(label), "%s  %d", tr(CATEGORY_NAMES[c]), n);
+            snprintf(labels[c], sizeof(labels[c]), "%s  %d", tr(CATEGORY_NAMES[c]), n);
         else
-            str_copy(label, sizeof(label), tr(CATEGORY_NAMES[c]));
-        float w = text_width(22, FONT_REGULAR, label) + 40;
+            str_copy(labels[c], sizeof(labels[c]), tr(CATEGORY_NAMES[c]));
+        cw[c] = text_width(22, FONT_REGULAR, labels[c]) + 40;
+        cx[c] = pos;
+        if (c == app.global.shelf_category)
+            sel_x = cx[c], sel_w = cw[c];
+        pos += cw[c] + 6;
+    }
+    char filter_label[64] = "";
+    float filter_x = 0, filter_chip_w = 0;
+    if (S.filter[0])
+    {
+        /* the filter in force, after the categories */
+        snprintf(filter_label, sizeof(filter_label), "\"%.40s\"", S.filter);
+        filter_chip_w = text_width(22, FONT_REGULAR, filter_label) + 40 + 34;
+        filter_x = pos + 8;
+        pos = filter_x + filter_chip_w;
+    }
+    const float want_x = S.filter[0] ? filter_x : sel_x, want_w = S.filter[0] ? filter_chip_w : sel_w;
+    float scroll_to = want_x + want_w > view_w ? want_x + want_w - view_w : 0.0f;
+    const float scroll_max = pos > view_w ? pos - view_w : 0.0f;
+    scroll_to = scroll_to > scroll_max ? scroll_max : scroll_to;
+    anim_approach(&S.chips_scroll, scroll_to, app.dt, TH_SNAP);
+    const float off = x0 - S.chips_scroll;
+
+    plat_set_clip((int)x0 - 4, 0, (int)view_w + 8, 140);
+    for (int c = 0; c < CAT_COUNT; ++c)
+    {
+        if (!shown[c])
+            continue;
         bool on = c == app.global.shelf_category;
         if (on)
         {
             if (S.chip_w == 0)
-                S.chip_x = x, S.chip_w = w;
-            anim_approach(&S.chip_x, x, app.dt, TH_SNAP);
-            anim_approach(&S.chip_w, w, app.dt, TH_SNAP);
-            draw_rrect(S.chip_x, y, S.chip_w, h, h * 0.5f, TH_TEXT);
+                S.chip_x = cx[c], S.chip_w = cw[c];
+            anim_approach(&S.chip_x, cx[c], app.dt, TH_SNAP);
+            anim_approach(&S.chip_w, cw[c], app.dt, TH_SNAP);
+            draw_rrect(off + S.chip_x, y, S.chip_w, h, h * 0.5f, TH_TEXT);
         }
-        text_draw(x + 20, y + 11, 22, FONT_REGULAR, on ? TH_BG : TH_HINT, ALIGN_LEFT, label);
-        x += w + 6;
+        text_draw(off + cx[c] + 20, y + 11, 22, FONT_REGULAR, on ? TH_BG : TH_HINT, ALIGN_LEFT, labels[c]);
     }
+    if (S.filter[0])
+    {
+        draw_rrect_outline(off + filter_x, y, filter_chip_w, h, h * 0.5f, 3, TH_FOCUS);
+        icon_draw(ICON_SEARCH, off + filter_x + 18, y + 11, 24, TH_FOCUS);
+        text_draw(off + filter_x + 54, y + 11, 22, FONT_REGULAR, TH_TEXT, ALIGN_LEFT, filter_label);
+    }
+    plat_set_clip(0, 0, 0, 0);
+    draw_hint_combo(plat_width() - TH_MARGIN - filter_w, 48, filter_pad, 1, '+', filter_msg, 30, TH_TEXT);
 
     /* account and clock, bottom right, just above the divider line over the hints */
     const float dy = TH_HINT_Y - 126;
@@ -790,6 +963,8 @@ static void storage_screen(uint32_t pressed)
 
 static void change_category(int step)
 {
+    const bool was_filtered = S.filter[0] != '\0';
+    S.filter[0] = '\0'; /* choosing a category leaves the filter */
     int c = app.global.shelf_category;
     for (int i = 0; i < CAT_COUNT; ++i)
     {
@@ -797,7 +972,7 @@ static void change_category(int step)
         if (c == CAT_ALL || category_size(c) > 0)
             break;
     }
-    if (c == app.global.shelf_category)
+    if (c == app.global.shelf_category && !was_filtered)
         return;
     int keep = selected_game();
     app.global.shelf_category = c;
@@ -956,7 +1131,7 @@ static void picker_draw(void)
     draw_rrect(x, y, w, h, TH_RADIUS, argb_alpha(TH_CARD, t));
     text_draw(x + 40, y + 30, 32, FONT_BOLD, argb_alpha(TH_TEXT, t), ALIGN_LEFT, tr("Choose a cover"));
     text_draw_fit(x + 40, y + 76, 22, FONT_REGULAR, argb_alpha(TH_TEXT_DIM, t), ALIGN_LEFT, 760,
-                  app.library.games[P.game].title);
+                  shelf_game_title(&app.library.games[P.game]));
 
     /* the list */
     const float lx = x + 40, ly = y + 130, lw = 760, rh = 50;
@@ -1249,117 +1424,246 @@ static void draw_launch_disc(int game, float d, float t)
     plat_set_clip(0, 0, 0, 0);
 }
 
-/* ---------------------------------------------------------------- idle slideshow */
+static bool start_black; /* the frame in which the game starts: all black, with the loading text */
 
-/* After a minute without a button on the shelf: the library's games one by
- * one, full screen (a gameplay picture when there is one, else the cover),
- * slowly drifting. Any button brings the shelf back (and is used up). */
-#define IDLE_SECONDS 60.0f
-#define SLIDE_SECONDS 7.0f
-
-static struct
+/* X on a game: offers Continue when it has a quick-resume save, else starts it. `ask` false (a disc put in the drive):
+ * it starts from the beginning, with no Continue box. `silent`: without the click of the button press. */
+static void play_game(int game, bool ask, bool silent)
 {
-    float idle, t;
-    bool on;
-    int game;        /* library index */
-    float dir;       /* this slide's drift, -1 or 1 */
-} SS;
-
-static void slideshow_next(void)
-{
-    if (S.view_count <= 0)
-        return;
-    /* rather a game whose picture is already here (downloaded or loaded) */
-    int pick = S.view[rand() % S.view_count];
-    for (int tries = 0; tries < 16; ++tries)
+    const Game *g = &app.library.games[game];
+    S.details = false;
+    if (ask && app.global.quick_resume && !ra_hardcore() && play_has_resume(g, &S.resume_age))
     {
-        int g = S.view[rand() % S.view_count];
-        if (g == SS.game && S.view_count > 1)
-            continue;
-        pick = g;
-        char path[SwanStationPS5_PATH_MAX], file[120];
-        snprintf(file, sizeof(file), "art/snaps/%.100s.png", app.library.games[g].id);
-        path_join(path, sizeof(path), app.paths.root, file);
-        FILE *f = fopen(path, "rb");
-        if (f || covers_get(g))
-        {
-            if (f)
-                fclose(f);
-            break;
-        }
+        /* offer to continue */
+        char path[SwanStationPS5_PATH_MAX];
+        static uint8_t rgba[THUMB_W * THUMB_H * 4];
+        play_resume_path(g, path, sizeof(path));
+        plat_texture_free(S.resume_thumb);
+        S.resume_thumb = play_load_thumb(path, rgba)
+                             ? plat_texture_create(rgba, THUMB_W, THUMB_H, true)
+                             : NULL;
+        S.dialog = true;
+        S.dialog_choice = 0;
     }
-    SS.game = pick;
-    SS.t = 0;
-    SS.dir = (rand() & 1) ? 1.0f : -1.0f;
-    int one[1] = {pick};
-    covers_update_view(one, 1, 0); /* load this cover even far from the cursor */
+    else
+    {
+        S.resume = false;
+        S.launch_t = 0.0001f;
+    }
+    if (!silent)
+        sfx_play(SFX_SELECT);
 }
 
-/* True while the slideshow has the screen. */
-static bool slideshow(uint32_t pressed)
-{
-    if (pressed || S.launch_t > 0 || S.dialog || P.open)
-    {
-        bool was = SS.on;
-        SS.on = false;
-        SS.idle = 0;
-        if (was)
-            covers_update_view(S.view, S.view_count, S.cursor);
-        return was; /* the button that ends it does nothing else */
-    }
-    SS.idle += app.dt;
-    if (!SS.on)
-    {
-        if (SS.idle < IDLE_SECONDS || S.view_count <= 0)
-            return false;
-        SS.on = true;
-        SS.game = -1;
-        slideshow_next();
-    }
-    SS.t += app.dt;
-    if (SS.t > SLIDE_SECONDS)
-        slideshow_next();
+/* ---------------------------------------------------------------- the filter keyboard (R1) */
 
-    const Game *g = &app.library.games[SS.game];
-    PlatTexture *pic = art_get(g, ART_SNAP);
-    bool snap = pic != NULL;
-    if (!pic)
-        pic = covers_get(SS.game);
-    float fade = fminf(fminf(SS.t / 0.8f, (SLIDE_SECONDS - SS.t) / 0.8f), 1.0f);
-    fade = fade < 0 ? 0 : fade;
-    float sw = (float)plat_width(), sh = (float)plat_height();
-    draw_rect(0, 0, sw, sh, 0xff000000u);
-    if (pic)
+#define FILTER_ROWS 4
+static const char *const FILTER_LETTERS[FILTER_ROWS] = {"1234567890", "qwertyuiop", "asdfghjkl-", "zxcvbnm._/"};
+static const char *const FILTER_SYMBOLS[FILTER_ROWS] = {"!@#$%^&*()", "-_=+[]{};:", "'\",.<>/?\\|", "~`"};
+
+static int filter_row_length(int row)
+{
+    return row == FILTER_ROWS ? 2 : (int)strlen((F.symbols ? FILTER_SYMBOLS : FILTER_LETTERS)[row]);
+}
+
+/* The text in the field is the filter: the shelf follows it letter by letter */
+static void filter_changed(void)
+{
+    int keep = selected_game();
+    str_copy(S.filter, sizeof(S.filter), F.text);
+    build_view(keep);
+    S.title_fade = 0.35f;
+}
+
+static void filter_open(void)
+{
+    F.open = true;
+    str_copy(F.before, sizeof(F.before), S.filter);
+    F.before_category = app.global.shelf_category;
+    str_copy(F.text, sizeof(F.text), S.filter);
+    F.row = 1;
+    F.col = 0;
+    F.symbols = false;
+    sfx_play(SFX_SELECT);
+    if (app.global.shelf_category != CAT_ALL)
     {
-        int tw, th;
-        plat_texture_size(pic, &tw, &th);
-        /* gameplay pictures fill the screen; covers are shown whole */
-        float k = snap ? fmaxf(sw / tw, sh / th) : fminf(sw * 0.62f / tw, (sh - 380) / th);
-        float zoom = 1.04f + 0.06f * SS.t / SLIDE_SECONDS;
-        float w = tw * k * zoom, h = th * k * zoom;
-        float x = (sw - w) * 0.5f + SS.dir * (SS.t / SLIDE_SECONDS - 0.5f) * sw * 0.04f;
-        float y = snap ? (sh - h) * 0.5f : (sh - 250 - h) * 0.5f; /* a cover stays above the title */
-        plat_draw_texture(pic, x, y, w, h, argb_alpha(0xffffffffu, fade), true);
+        /* it always looks through all the games */
+        int keep = selected_game();
+        app.global.shelf_category = CAT_ALL;
+        app.settings.shelf_category = CAT_ALL;
+        build_view(keep);
     }
-    /* the title, bottom left, over a shade */
-    for (int i = 0; i < 30; ++i) /* darker towards the bottom */
-        draw_rect(0, sh - 300 + i * 10, sw, 10, (uint32_t)(i * 6.5f) << 24);
-    text_draw_fit(TH_MARGIN, sh - 170, 56, FONT_BOLD, argb_alpha(0xffffffffu, fade), ALIGN_LEFT, sw - 2 * TH_MARGIN,
-                  display_title(g));
-    GameStats *st = stats_get(g->id);
-    char line[96] = "";
-    if (st && st->seconds)
+}
+
+static void filter_input(uint32_t pressed)
+{
+    int row = F.row, col = F.col;
+    if (pressed & BIT(BTN_UP))
+        F.row = (F.row + FILTER_ROWS) % (FILTER_ROWS + 1);
+    if (pressed & BIT(BTN_DOWN))
+        F.row = (F.row + 1) % (FILTER_ROWS + 1);
+    if (pressed & BIT(BTN_LEFT))
+        --F.col;
+    if (pressed & BIT(BTN_RIGHT))
+        ++F.col;
+    int len = filter_row_length(F.row);
+    if (F.col < 0)
+        F.col = len - 1;
+    if (F.col >= len)
+        F.col = (pressed & BIT(BTN_RIGHT)) ? 0 : len - 1;
+    if (F.row != row || F.col != col)
+        sfx_play(SFX_CLICK);
+    if (pressed & BIT(BTN_L2))
     {
-        char played[48];
-        stats_format_time(st->seconds, played, sizeof(played));
-        snprintf(line, sizeof(line), tr("Played %s"), played);
+        F.symbols = !F.symbols;
+        if (F.col >= filter_row_length(F.row))
+            F.col = filter_row_length(F.row) - 1;
+        sfx_play(SFX_CLICK);
     }
-    text_draw(TH_MARGIN, sh - 96, 24, FONT_REGULAR, argb_alpha(0xffc8c8d0u, fade), ALIGN_LEFT,
-              line[0] ? line : shelf_region_name(g->serial));
-    char clock_text[16];
-    plat_clock(clock_text, sizeof(clock_text));
-    text_draw(sw - TH_MARGIN, 48, 40, FONT_BOLD, 0xd0ffffffu, ALIGN_RIGHT, clock_text);
-    text_draw(sw - TH_MARGIN, sh - 96, 22, FONT_REGULAR, 0x90ffffffu, ALIGN_RIGHT, tr("Press any button"));
+    size_t n = strlen(F.text);
+    if ((pressed & BIT(BTN_SQUARE)) && n)
+    {
+        F.text[n - 1] = '\0';
+        sfx_play(SFX_CLICK);
+        filter_changed();
+    }
+    if ((pressed & BIT(BTN_TRIANGLE)) && n)
+    {
+        F.text[0] = '\0';
+        sfx_play(SFX_CLICK);
+        filter_changed();
+    }
+    if (pressed & (BIT(BTN_START) | BIT(BTN_CROSS)))
+    {
+        char typed = 0;
+        if (F.row < FILTER_ROWS && (pressed & BIT(BTN_CROSS)))
+            typed = (F.symbols ? FILTER_SYMBOLS : FILTER_LETTERS)[F.row][F.col];
+        else if (F.row == FILTER_ROWS && F.col == 0 && (pressed & BIT(BTN_CROSS)))
+            typed = ' ';
+        if (typed)
+        {
+            n = strlen(F.text);
+            if (n < FILTER_MAX)
+            {
+                F.text[n] = typed;
+                F.text[n + 1] = '\0';
+                sfx_play(SFX_CLICK);
+                filter_changed();
+            }
+        }
+        else
+        {
+            F.open = false; /* Apply (or Start): the filter stays */
+            sfx_play(SFX_SELECT);
+        }
+    }
+    else if (pressed & BIT(BTN_CIRCLE))
+    {
+        F.open = false; /* Back: as it was, the category too */
+        app.global.shelf_category = F.before_category;
+        app.settings.shelf_category = F.before_category;
+        str_copy(F.text, sizeof(F.text), F.before);
+        filter_changed();
+        sfx_play(SFX_BACK);
+    }
+}
+
+static void filter_draw(void)
+{
+    if (!F.open)
+        return;
+    draw_rect(0, 0, plat_width(), plat_height(), 0xc0000000u);
+    const float mw = 760, key = 62, gap = 8, kh = 54;
+    const float mh = 76 + 62 + 22 + (FILTER_ROWS + 1) * (kh + gap) + 14;
+    const float mx = CENTER_X - mw * 0.5f, my = (plat_height() - mh) * 0.5f - 30;
+    draw_rrect(mx, my, mw, mh, TH_RADIUS, TH_CARD);
+    text_draw(mx + 32, my + 24, 30, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Filter games"));
+    char count[48];
+    snprintf(count, sizeof(count), tr("%d games"), S.view_count);
+    text_draw(mx + mw - 32, my + 32, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, count);
+
+    const float fy = my + 76;
+    draw_rrect(mx + 32, fy, mw - 64, 62, TH_RADIUS_SMALL, TH_ROW_SELECTED);
+    draw_rrect_outline(mx + 32, fy, mw - 64, 62, TH_RADIUS_SMALL, 3, TH_FOCUS);
+    if (F.text[0])
+    {
+        char shown[FILTER_MAX + 2];
+        snprintf(shown, sizeof(shown), "%s_", F.text);
+        text_draw_fit(mx + 52, fy + 14, 30, FONT_BOLD, TH_TEXT, ALIGN_LEFT, mw - 104, shown);
+    }
+    else
+        text_draw_fit(mx + 52, fy + 18, 24, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, mw - 104,
+                      tr("Filter by name, folder or serial..."));
+
+    float ky = fy + 62 + 22;
+    for (int r = 0; r < FILTER_ROWS; ++r)
+    {
+        int rl = filter_row_length(r);
+        float x = CENTER_X - (rl * (key + gap) - gap) * 0.5f;
+        for (int c = 0; c < rl; ++c)
+        {
+            bool on = r == F.row && c == F.col;
+            float kx = x + c * (key + gap);
+            draw_rrect(kx, ky, key, kh, TH_RADIUS_SMALL, on ? TH_ROW_SELECTED : TH_PILL);
+            if (on)
+                draw_rrect_outline(kx, ky, key, kh, TH_RADIUS_SMALL, 3, TH_FOCUS);
+            char label[2] = {(F.symbols ? FILTER_SYMBOLS : FILTER_LETTERS)[r][c], '\0'};
+            text_draw(kx + key * 0.5f, ky + 11, 28, FONT_BOLD, TH_TEXT, ALIGN_CENTER, label);
+        }
+        ky += kh + gap;
+    }
+    const float sw = 10 * (key + gap) - gap, space_w = sw * 0.62f, go_w = sw - space_w - gap, sx = CENTER_X - sw * 0.5f;
+    for (int c = 0; c < 2; ++c)
+    {
+        bool on = F.row == FILTER_ROWS && F.col == c;
+        float kx = c == 0 ? sx : sx + space_w + gap, kw = c == 0 ? space_w : go_w;
+        draw_rrect(kx, ky, kw, kh, TH_RADIUS_SMALL, on ? TH_ROW_SELECTED : TH_PILL);
+        if (on)
+            draw_rrect_outline(kx, ky, kw, kh, TH_RADIUS_SMALL, 3, TH_FOCUS);
+        text_draw(kx + kw * 0.5f, ky + 13, 24, FONT_BOLD, c ? TH_FOCUS : TH_TEXT_DIM, ALIGN_CENTER,
+                  c ? tr("Apply") : tr("Space"));
+    }
+}
+
+bool shelf_idle(void)
+{
+    return !S.dialog && S.launch_t <= 0.0f && !S.starting && !P.open && !F.open;
+}
+
+bool shelf_show_game(int library_index)
+{
+    if (library_index < 0 || library_index >= app.library.count || !shelf_idle())
+        return false;
+    /* a disc put in is a request for its game: if it is not in the category on screen, the shelf shows all */
+    if (!in_category(&app.library.games[library_index], app.global.shelf_category))
+    {
+        app.global.shelf_category = CAT_ALL;
+        app.settings.shelf_category = CAT_ALL;
+    }
+    if (S.filter[0] && !matches_filter(&app.library.games[library_index], S.filter))
+    {
+        S.filter[0] = '\0'; /* the filter hides it: off */
+        build_view(selected_game());
+    }
+    shelf_select_game(library_index);
+    if (selected_game() != library_index)
+    {
+        SwanStationPS5_log("shelf: game %d cannot be shown in category %d", library_index, app.global.shelf_category);
+        return false;
+    }
+    return true;
+}
+
+bool shelf_play_game(int library_index, bool direct)
+{
+    if (!shelf_show_game(library_index))
+        return false;
+    play_game(library_index, false, direct);
+    if (direct)
+    {
+        /* the disc daemon opened the app: nobody is watching the case open, so the animation is skipped and only its
+         * last frame (the "Loading your game..." one) is shown while the game loads */
+        S.launch_t = fmaxf(S.launch_t, launch_total() - 0.001f);
+    }
     return true;
 }
 
@@ -1370,16 +1674,19 @@ void shelf_screen(uint32_t pressed)
         storage_screen(pressed);
         return;
     }
-    if (slideshow(pressed))
-        return;
-
     /* O pressed with the shelf free: only such a press can start the hold-to-exit */
-    const bool circle_on_shelf = (pressed & BIT(BTN_CIRCLE)) && !(S.dialog || S.details || P.open || S.launch_t > 0.0f);
+    const bool circle_on_shelf =
+        (pressed & BIT(BTN_CIRCLE)) && !(S.dialog || S.details || P.open || F.open || S.launch_t > 0.0f);
 
     /* ------------------------------------------------ input */
     if (P.open)
     {
         picker_input(pressed);
+        pressed = 0;
+    }
+    if (F.open)
+    {
+        filter_input(pressed);
         pressed = 0;
     }
     if (S.dialog)
@@ -1445,9 +1752,9 @@ void shelf_screen(uint32_t pressed)
             S.buzz_locked = true; /* once: holding the direction (it auto-repeats) doesn't buzz again */
         }
         if (pressed & BIT(BTN_L1))
-            change_category(-1);
+            change_category(1); /* the next category, to the right */
         if (pressed & BIT(BTN_R1))
-            change_category(1);
+            filter_open();
         if (pressed & BIT(BTN_START))
         {
             int keep = selected_game();
@@ -1470,24 +1777,6 @@ void shelf_screen(uint32_t pressed)
                 sfx_play(SFX_SELECT);
                 if (app.global.shelf_category == CAT_FAVORITES)
                     build_view(game);
-            }
-        }
-        if ((pressed & BIT(BTN_L3)) && S.details && game >= 0)
-        {
-            /* hide / show again: the cursor stays where the game was */
-            GameStats *st = stats_get(app.library.games[game].id);
-            if (st)
-            {
-                st->hidden = !st->hidden;
-                stats_save();
-                app_toast(st->hidden ? "Hidden: find it under Hidden" : "Back on the shelf");
-                sfx_play(SFX_SELECT);
-                S.details = false;
-                int keep_pos = S.cursor;
-                build_view(-1);
-                S.cursor = keep_pos < S.view_count ? keep_pos : (S.view_count ? S.view_count - 1 : 0);
-                S.pos = (float)S.cursor;
-                game = selected_game();
             }
         }
         if ((pressed & BIT(BTN_L3)) && !S.details)
@@ -1513,10 +1802,42 @@ void shelf_screen(uint32_t pressed)
             memcards_open(SCREEN_LIBRARY);
             return;
         }
-        if (pressed & BIT(BTN_TRIANGLE) && game >= 0)
+        const bool details_was_open = S.details;
+        if ((pressed & BIT(BTN_TRIANGLE)) && game >= 0 && !S.details)
         {
-            S.details = !S.details;
-            sfx_play(S.details ? SFX_SELECT : SFX_BACK);
+            S.details = true;
+            sfx_play(SFX_SELECT);
+        }
+        /* in Details, holding Triangle deletes the game's files (to import the disc again); O closes Details */
+        {
+            const bool tri = (app.pads[app_nav_pad()].buttons & BIT(BTN_TRIANGLE)) != 0;
+            if (details_was_open && S.details && game >= 0 && (pressed & BIT(BTN_TRIANGLE)))
+            {
+                S.delete_armed = true;
+                app_toast("Hold {Triangle} to delete this game's files.");
+            }
+            if (S.details && game >= 0 && tri && S.delete_armed && !S.dialog)
+            {
+                S.delete_hold += app.dt;
+                if (S.delete_hold >= DELETE_HOLD)
+                {
+                    S.delete_hold = 0.0f;
+                    S.delete_armed = false;
+                    int removed = library_delete_game_files(&app.library.games[game]);
+                    if (removed)
+                        S.details = false; /* the game is gone; if nothing could be deleted, Details stays open */
+                    app_toast(removed ? "The game's files were deleted." : "The game's files could not be deleted.");
+                    if (removed)
+                        sfx_play(SFX_BACK);
+                    app_rescan(); /* always: the shelf shows what is on the disk now (an empty shelf, if it was the last) */
+                    return;
+                }
+            }
+            else if (!tri || !S.details)
+            {
+                S.delete_hold = 0.0f;
+                S.delete_armed = false;
+            }
         }
         if ((pressed & BIT(BTN_CIRCLE)) && S.details)
         {
@@ -1524,29 +1845,7 @@ void shelf_screen(uint32_t pressed)
             sfx_play(SFX_BACK);
         }
         if ((pressed & BIT(BTN_CROSS)) && game >= 0)
-        {
-            const Game *g = &app.library.games[game];
-            S.details = false;
-            if (app.global.quick_resume && !ra_hardcore() && play_has_resume(g, &S.resume_age))
-            {
-                /* offer to continue */
-                char path[SwanStationPS5_PATH_MAX];
-                static uint8_t rgba[THUMB_W * THUMB_H * 4];
-                play_resume_path(g, path, sizeof(path));
-                plat_texture_free(S.resume_thumb);
-                S.resume_thumb = play_load_thumb(path, rgba)
-                                     ? plat_texture_create(rgba, THUMB_W, THUMB_H, true)
-                                     : NULL;
-                S.dialog = true;
-                S.dialog_choice = 0;
-            }
-            else
-            {
-                S.resume = false;
-                S.launch_t = 0.0001f;
-            }
-            sfx_play(SFX_SELECT);
-        }
+            play_game(game, true, false);
         if ((pressed & BIT(BTN_SQUARE)) && S.details && game >= 0)
         {
             sfx_play(SFX_SELECT);
@@ -1556,7 +1855,8 @@ void shelf_screen(uint32_t pressed)
         {
             sfx_play(SFX_SELECT);
             config_save(&app.global, app.paths.config);
-            app_open_settings(SCREEN_LIBRARY);
+            /* with the game under the cursor, so Settings can be for "This game" or "All games" */
+            app_open_shelf_settings(game >= 0 ? &app.library.games[game] : NULL);
         }
     }
 
@@ -1630,7 +1930,7 @@ void shelf_screen(uint32_t pressed)
             lift = 0.0f;
         else
             push = 0.0f;
-        if (S.dialog || S.details || P.open || S.launch_t > 0.0f || !shelf_cases() || moving)
+        if (S.dialog || P.open || S.launch_t > 0.0f || !shelf_cases() || moving)
             push = lift = 0.0f;
         /* with the left stick in use the right one is ignored, and what it had turned goes back fast: the knock of a press
          * is a way of its own, never mixed with a tilt */
@@ -1649,6 +1949,7 @@ void shelf_screen(uint32_t pressed)
         /* the last frame (disc and "Loading") stays on screen while the game loads */
         S.starting = false;
         S.launch_t = 0.0f;
+        start_black = true; /* this frame is still drawn: black, not the shelf for a moment */
         config_save(&app.global, app.paths.config);
         app_start_game(game, S.resume);
     }
@@ -1695,6 +1996,9 @@ void shelf_screen(uint32_t pressed)
         int first = (int)floorf(S.pos) - 6, last = (int)ceilf(S.pos) + 6;
         const int base = (int)floorf(S.pos + 0.5f);
         const bool cases_ = shelf_cases();
+        /* with the details panel open the other covers fade away and the chosen one slides to the left, clear of the panel */
+        const float det = 1.0f - (1.0f - S.details_t) * (1.0f - S.details_t);
+        const float det_shift = det * ((plat_width() - 668.0f) * 0.5f - CENTER_X);
         /* where the cover at (ring, side) stands: its centre, scale, width and the shade it is drawn with */
         struct Place
         {
@@ -1752,6 +2056,13 @@ void shelf_screen(uint32_t pressed)
                     continue;
                 bool selected = k == S.cursor;
                 bool clipped = false;
+                if (!selected && det > 0.0f)
+                {
+                    const uint32_t a = (uint32_t)(255.0f * (1.0f - det));
+                    if (a == 0)
+                        continue;
+                    me.tint = (me.tint & 0x00ffffffu) | (a << 24);
+                }
                 if (ring > 0)
                 {
                     struct Place nearer;
@@ -1777,24 +2088,42 @@ void shelf_screen(uint32_t pressed)
                     case3d_launch(o * o * (3.0f - 2.0f * o), 7.0f * u * u);
                 }
                 if (cases_)
-                    draw_case(shelf_cover(index), &app.library.games[index], CENTER_X + me.ox, flow_y(),
+                    draw_case(shelf_cover(index), &app.library.games[index], CENTER_X + me.ox + (selected ? det_shift : 0.0f), flow_y(),
                               COVER_H * me.scale, me.yaw, me.pitch, me.tint, selected && me.ad < 0.25f && launch < 0.5f);
                 else
-                    draw_cover(shelf_cover(index), &app.library.games[index], CENTER_X + me.ox, flow_y(),
+                    draw_cover(shelf_cover(index), &app.library.games[index], CENTER_X + me.ox + (selected ? det_shift : 0.0f), flow_y(),
                                COVER_H * me.scale, me.squeeze, me.tint, selected && me.ad < 0.25f && launch < 0.5f);
                 if (clipped)
                     plat_set_clip(0, 0, 0, 0);
             }
         #undef PLACE
         plat_profile("covers");
-        float text_a = (1.0f - launch) * (1.0f - S.title_fade / 0.35f * 0.8f);
-        draw_info(&app.library.games[game], text_a);
+        float text_a = (1.0f - launch) * (1.0f - S.title_fade / 0.35f * 0.8f) * (1.0f - det);
+        if (text_a > 0.0f) /* the title and the tags go while the details panel is open */
+            draw_info(&app.library.games[game], text_a);
         draw_details(&app.library.games[game], S.details_t);
         plat_profile("info");
     }
+    else if (S.filter[0])
+    {
+        /* the filter finds nothing: not the empty shelf's instructions, only that */
+        const float w = 760, h = 230, x = CENTER_X - w * 0.5f, y = 360;
+        draw_rrect(x, y, w, h, TH_RADIUS, TH_CARD_SOFT);
+        icon_draw(ICON_SEARCH, CENTER_X - 32, y + 28, 64, TH_TEXT_DIM);
+        text_draw_fit(CENTER_X, y + 112, 30, FONT_BOLD, TH_TEXT, ALIGN_CENTER, w - 60, tr("No game matches the filter."));
+        char shown[64];
+        snprintf(shown, sizeof(shown), "\"%.40s\"", S.filter);
+        text_draw_fit(CENTER_X, y + 164, 24, FONT_REGULAR, TH_TEXT_DIM, ALIGN_CENTER, w - 60, shown);
+    }
     else
     {
-        float w = 1200, h = 330, x = CENTER_X - w * 0.5f, y = 300;
+        float w = 1200, x = CENTER_X - w * 0.5f, y = 300;
+        /* the line about discs closes the card, a little bigger than the rest; two lines if it does not fit in one */
+        char tip1[256], tip2[256];
+        const int tip_lines = split_two_lines(28, FONT_REGULAR, w - 100,
+                                              tr("You can also plug in a USB disc drive and put in your own PS1 discs: they are copied to your shelf."),
+                                              tip1, tip2, sizeof(tip1));
+        float h = (app.sandboxed ? 396 : 374) + (tip_lines - 1) * 38;
         draw_rrect(x, y, w, h, TH_RADIUS, TH_CARD_SOFT);
         icon_draw(ICON_DISC, CENTER_X - 32, y + 30, 64, TH_FOCUS);
         text_draw(CENTER_X, y + 108, 36, FONT_BOLD, TH_TEXT, ALIGN_CENTER, tr("Your shelf is empty"));
@@ -1818,30 +2147,42 @@ void shelf_screen(uint32_t pressed)
         else
             text_draw(CENTER_X, y + 274, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_CENTER,
                       tr("On your PC:  python tools/SwanStationPS5_sync.py upload --host <PS5 IP>"));
+        /* and the other way, last: your own discs */
+        const float tip_y = y + (app.sandboxed ? 330 : 310);
+        text_draw_fit(CENTER_X, tip_y, 28, FONT_REGULAR, TH_TEXT, ALIGN_CENTER, w - 80, tip1);
+        if (tip_lines > 1)
+            text_draw_fit(CENTER_X, tip_y + 38, 28, FONT_REGULAR, TH_TEXT, ALIGN_CENTER, w - 80, tip2);
     }
 
     draw_header();
     plat_profile("header");
-    int pending = covers_downloading();
-    if (pending > 0)
-    {
-        char dl[64];
-        snprintf(dl, sizeof(dl), tr("Getting covers (%d)"), pending);
-        text_draw(plat_width() - TH_MARGIN, 104, 20, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, dl);
-    }
     const int glyphs[] = {GLYPH_CROSS, GLYPH_TRIANGLE, GLYPH_SQUARE, GLYPH_L3,
                           GLYPH_R3, GLYPH_TOUCHPAD};
-    GameStats *hint_st = game >= 0 ? stats_get(app.library.games[game].id) : NULL;
-    const char *const labels[] = {"Play", "Details", S.details ? "Choose a cover" : "Settings",
-                                  S.details ? (hint_st && hint_st->hidden ? "Unhide" : "Hide") : "Reload",
-                                  "Favorite", "M.Card"};
-    app_draw_hints(glyphs, labels, S.view_count ? (!S.details ? 6 : 4) : 1, NULL);
-    if (S.view_count)
+    const char *const labels[] = {"Play", "Details", "Settings", "Reload", "Favorite", "M.Card"};
+    /* in Details: only Play down here; Choose a cover and Delete (held) are in the panel itself */
+    const int details_glyphs[] = {GLYPH_CROSS};
+    const char *const details_labels[] = {"Play"};
+    if (F.open)
     {
-        char sort[64];
-        snprintf(sort, sizeof(sort), "%s: %s", tr("Sort"), shelf_sort_name(app.global.sort_mode));
-        const HintCombo right[2] = {{{GLYPH_L1, GLYPH_R1}, 2, '/', "Category"}, {{GLYPH_START}, 1, '+', sort}};
-        app_draw_hints_right(right, 2);
+        static const int fglyphs[] = {GLYPH_CROSS, GLYPH_SQUARE, GLYPH_TRIANGLE, GLYPH_START, GLYPH_CIRCLE};
+        static const char *const flabels[] = {"Type", "Delete", "Clear", "Apply", "Back"};
+        app_draw_hints(fglyphs, flabels, 5, NULL);
+        const HintCombo fright[1] = {{{GLYPH_L2}, 1, '+', "Symbols"}};
+        app_draw_hints_right(fright, 1);
+    }
+    else
+    {
+        if (S.details && S.view_count)
+            app_draw_hints(details_glyphs, details_labels, 1, NULL);
+        else
+            app_draw_hints(glyphs, labels, S.view_count ? 6 : 1, NULL);
+        if (S.view_count)
+        {
+            char sort[64];
+            snprintf(sort, sizeof(sort), "%s: %s", tr("Sort"), shelf_sort_name(app.global.sort_mode));
+            const HintCombo right[2] = {{{GLYPH_L1}, 1, '+', "Category"}, {{GLYPH_START}, 1, '+', sort}};
+            app_draw_hints_right(right, 2);
+        }
     }
     plat_profile("hints");
 
@@ -1854,7 +2195,7 @@ void shelf_screen(uint32_t pressed)
         const float w = 1000, h = 420, x = CENTER_X - w * 0.5f, y = 330 + (1.0f - e) * 40;
         draw_rrect(x, y, w, h, TH_RADIUS, argb_alpha(TH_CARD, t));
         text_draw_fit(x + 40, y + 30, 32, FONT_BOLD, argb_alpha(TH_TEXT, t), ALIGN_LEFT, w - 80,
-                      app.library.games[game].title);
+                      shelf_game_title(&app.library.games[game]));
         const char *labels[2] = {tr("Continue"), tr("Start over")};
         char age[64], ago[48];
         long a = S.resume_age;
@@ -1892,14 +2233,21 @@ void shelf_screen(uint32_t pressed)
     }
 
     picker_draw();
+    filter_draw();
+    if (start_black)
+    {
+        start_black = false;
+        draw_rect(0, 0, plat_width(), plat_height(), 0xff000000u);
+        text_draw(CENTER_X, plat_height() - 120, 30, FONT_REGULAR, TH_TEXT_DIM, ALIGN_CENTER, tr("Loading your game..."));
+    }
     if (S.launch_t > 0.0f)
     {
         bool disc = app.global.disc_animation && game >= 0;
         /* with the disc, the shelf darkens behind it and the disc keeps spinning
          * while the game loads (no black gap); without it, a fade to black */
-        /* the 3D cases don't darken at all: the CD spins in the light until the game starts, with no fade to black */
-        if (!(disc && shelf_cases()))
-            draw_rect(0, 0, plat_width(), plat_height(), argb_alpha(0xff000000u, disc ? launch * 0.85f : launch));
+        /* the 3D cases keep the light on while the CD spins, then the whole screen fades to black before the game starts */
+        draw_rect(0, 0, plat_width(), plat_height(),
+                  argb_alpha(0xff000000u, disc && !shelf_cases() ? launch * 0.85f : launch));
         if (disc && !shelf_cases()) /* the 3D cases bring their own CD out */
             draw_launch_disc(game, fminf(S.launch_t / DISC_TIME, 1.0f), S.launch_t);
         /* with the 3D cases the text is there from the moment the case opens; otherwise it comes with the final fade */
@@ -1907,6 +2255,17 @@ void shelf_screen(uint32_t pressed)
         if (loading > 0.0f)
             text_draw(CENTER_X, plat_height() - 120, 30, FONT_REGULAR, argb_alpha(TH_TEXT_DIM, loading),
                       ALIGN_CENTER, tr("Loading your game..."));
+    }
+    if (S.delete_hold > 0.5f)
+    {
+        /* Triangle held in Details: a bar fills up to the deletion */
+        const char *msg = tr("Keep holding to delete this game's files...");
+        float w = text_width(26, FONT_REGULAR, msg) + 96, h = 84;
+        float x = (plat_width() - w) * 0.5f, y = plat_height() - 300;
+        draw_rrect(x, y, w, h, TH_RADIUS_SMALL, 0xf0000000u | (TH_PILL & 0xffffffu));
+        text_draw(CENTER_X, y + 12, 26, FONT_REGULAR, TH_TEXT, ALIGN_CENTER, msg);
+        draw_rrect(x + 32, y + 56, w - 64, 12, 6, TH_DIVIDER);
+        draw_rrect(x + 32, y + 56, fmaxf(12.0f, (w - 64) * fminf(S.delete_hold / DELETE_HOLD, 1.0f)), 12, 6, TH_DANGER);
     }
     if (S.quit_hold > 0.5f)
     {

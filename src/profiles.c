@@ -209,7 +209,7 @@ bool profiles_switch(int i)
         fprintf(f, "%s\n", i ? names[i] : "");
         fclose(f);
     }
-    shelf_library_changed(); /* favourites and hidden games are the profile's */
+    shelf_library_changed(); /* favourites are the profile's */
     SwanStationPS5_log("profile: switched to %s", i ? names[i] : "the main profile");
     return true;
 }

@@ -76,16 +76,17 @@ static int downloading;
 
 void covers_url(char *out, size_t size, int cover_style, const char *serial)
 {
+    (void)cover_style;
     snprintf(out, size, "https://raw.githubusercontent.com/xlenore/psx-covers/main/covers/%s/%s.%s",
-             cover_style == COVER_BOX3D ? "3d" : "default", serial,
-             cover_style == COVER_BOX3D ? "png" : "jpg");
+             /* cover_style == COVER_BOX3D ? "3d" : */ "default", serial,
+             /* cover_style == COVER_BOX3D ? "png" : */ "jpg");
 }
 
 static void cache_path(char *out, size_t size, const char *serial)
 {
     char file[64];
-    snprintf(file, sizeof(file), "%s/%s.%s", style == COVER_BOX3D ? "3d" : "default", serial,
-             style == COVER_BOX3D ? "png" : "jpg");
+    snprintf(file, sizeof(file), "%s/%s.%s", /* style == COVER_BOX3D ? "3d" : */ "default", serial,
+             /* style == COVER_BOX3D ? "png" : */ "jpg");
     path_join(out, size, paths.covers, file);
 }
 
@@ -155,6 +156,22 @@ static uint8_t *load_image(const char *path, int *w, int *h)
 uint8_t *covers_decode(const char *path, int *w, int *h)
 {
     return load_image(path, w, h);
+}
+
+uint8_t *covers_for_serial(const char *serial, int *w, int *h)
+{
+    char path[SwanStationPS5_PATH_MAX];
+    cache_path(path, sizeof(path), serial);
+    if (!path_exists(path) && download_enabled && network_failures < 3)
+    {
+        char url[256], dir[SwanStationPS5_PATH_MAX];
+        covers_url(url, sizeof(url), style, serial);
+        str_copy(dir, sizeof(dir), path);
+        *strrchr(dir, '/') = '\0';
+        make_dirs(dir);
+        net_download(url, path);
+    }
+    return path_exists(path) ? load_image(path, w, h) : NULL;
 }
 
 static const char *const IMAGE_EXTS[] = {"png", "jpg", "jpeg"};

@@ -1,6 +1,6 @@
 /*
- * SwanStationPS5 - the themes: Classic, Neon Arcade, Memory Card (light and dark) and
- * Record Shelf. Settings > Library > Theme.
+ * SwanStationPS5 - the themes: Classic, Neon Arcade, Memory Card (light and dark), Record Shelf and
+ * Grayrat. Settings > Library > Theme.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "theme.h"
@@ -13,7 +13,7 @@ Theme theme;
 static int current = -1;
 
 const char *const THEME_NAMES[THEME_COUNT] = {"Classic", "Neon Arcade", "Memory Card", "Memory Card Dark",
-                                              "Record Shelf"};
+                                              "Record Shelf", "Grayrat"};
 
 static const Theme THEMES[THEME_COUNT] = {
     [THEME_CLASSIC] = {
@@ -52,6 +52,15 @@ static const Theme THEMES[THEME_COUNT] = {
         .hint = 0xffb89a7du, .gold = 0xffe8b85au, .danger = 0xffe88a7au, .good = 0xff9fcf8au,
         .divider = 0xff4a3628u, .cover_outline = 0xffe8a35au, .backdrop_tint = 0xffffc98au, .backdrop = BACKDROP_LAMP,
         .shelf_plank = true, .layout = LAYOUT_SPINES, .font_regular = "fonts/WorkSans-400.ttf", .font_bold = "fonts/Fraunces-600.ttf"},
+    /* Classic (the cover-flow shelf) in the colours of Memory Card Dark, on a wall and a dark floor, with Neon Arcade's font */
+    [THEME_GRAYRAT] = {
+        .bg = 0xff1f2128u, .bg_deep = 0xff17181eu, .card = 0xff2a2d36u, .card_soft = 0xe02a2d36u,
+        .row_selected = 0xff35425eu, .focus = 0xff7fa6ecu, .pill = 0xff33363fu, .switch_on = 0xff4a7bd0u,
+        .switch_off = 0xff4a4d58u, .text = 0xffe8e9edu, .text_dim = 0xff9a9eaau, .text_soft = 0xffcfd1d8u,
+        .hint = 0xff9a9eaau, .gold = 0xffe9b52au, .danger = 0xffff8a80u, .good = 0xff5fc98au,
+        /* a fixed grey, not the cover's colour: the brightest band (0.56, in the middle of the screen) comes out at 138 */
+        .divider = 0xff3a3d47u, .cover_outline = 0xff7fa6ecu, .backdrop_tint = 0xfff6f7f7u, .backdrop = BACKDROP_FLOOR,
+        .font_regular = "fonts/ChakraPetch-500.ttf", .font_bold = "fonts/ChakraPetch-700.ttf"},
 };
 
 void theme_apply(int id)

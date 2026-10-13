@@ -43,6 +43,7 @@ typedef struct
     long long when;
     unsigned points;
     char game[96], title[96], description[192];
+    bool hardcore; /* earned in hardcore (false for the entries logged before it was kept) */
 } RaRecent;
 int ra_recent(RaRecent *out, int max);
 unsigned ra_user_hardcore_score(void);
@@ -52,11 +53,14 @@ void ra_use_token(const char *user, const char *token);
 void ra_sign_out(void);
 bool ra_hardcore(void);          /* blocks save states, cheats and rewind */
 void ra_set_hardcore(bool on);   /* saved to the ini */
+/* The game in play raised RetroAchievements' own notices: this emulator is not recognised (hardcore unlocks do not
+ * count) and/or this dump is not a tested version of the game. */
+bool ra_warning(bool *emulator, bool *version);
 /* "12 of 40 achievements, 115 of 400 points", or "" when no set is loaded */
 void ra_game_summary(char *out, size_t size);
 
 /* Messages for the UI (unlocks, leaderboards...). Returns false when empty. */
-bool ra_next_message(char *title, size_t title_size, char *detail, size_t detail_size);
+bool ra_next_message(char *title, size_t title_size, char *detail, size_t detail_size, bool *quiet);
 
 /* While playing: the counted achievement that just moved (18/80 dragons).
  * False when there's nothing to show. */

@@ -179,6 +179,35 @@ UnlockResult ps5_unlock_etahen(void)
     return result;
 }
 
+UnlockResult ps5_unlock_quick(void)
+{
+    if (ps5_data_listable())
+        return UNLOCK_ALREADY;
+    if (access(CRASH_MARKER, F_OK) == 0)
+        return UNLOCK_SKIPPED_AFTER_CRASH; /* ps5_unlock_etahen clears it and skips once */
+    int marker = open(CRASH_MARKER, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (marker >= 0)
+    {
+        fsync(marker);
+        close(marker);
+    }
+    seteuid(geteuid()); /* own credential before the HEN changes it */
+    const int pid = (int)getpid();
+    int published = 0;
+    for (int i = 0; i < REQUEST_COUNT; ++i)
+        published += publish(REQUESTS[i], pid);
+    UnlockResult result = UNLOCK_CANT_REQUEST;
+    if (published)
+    {
+        /* ~0.3 s: a service that is there answers within a few frames */
+        result = wait_listable(18) ? UNLOCK_OK : UNLOCK_NO_ANSWER;
+        for (int i = 0; i < REQUEST_COUNT; ++i)
+            unlink(REQUESTS[i]);
+    }
+    unlink(CRASH_MARKER);
+    return result;
+}
+
 void ps5_unlock_reset_crash_marker(void)
 {
     unlink(CRASH_MARKER);

@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <unistd.h>
 
 #define MAX_DIR_FILES 64
 #define MAX_ROOT_ENTRIES 4096 /* entries read from the games folder (static: 1 MB of names) */
@@ -563,4 +565,118 @@ void library_free(Library *lib)
 {
     free(lib->games);
     memset(lib, 0, sizeof(*lib));
+}
+
+/* ---------------------------------------------------------------- deleting a game */
+
+#define DEL_MAX 64
+
+typedef struct
+{
+    char path[DEL_MAX][SwanStationPS5_PATH_MAX];
+    int count;
+} DelList;
+
+static void del_add(DelList *l, const char *folder, const char *full)
+{
+    size_t n = strlen(folder);
+    if (strstr(full, "..") || l->count >= DEL_MAX)
+        return;
+    if (strncmp(full, folder, n) != 0 || full[n] != '/') /* only inside the game's own folder */
+        return;
+    for (int i = 0; i < l->count; ++i)
+        if (!strcmp(l->path[i], full))
+            return;
+    str_copy(l->path[l->count++], SwanStationPS5_PATH_MAX, full);
+}
+
+/* `file` is a full path inside `folder`: it and what it lists, to delete */
+static void del_collect(DelList *l, const char *folder, const char *file, int depth)
+{
+    char full[SwanStationPS5_PATH_MAX], dir[SwanStationPS5_PATH_MAX];
+    str_copy(full, sizeof(full), file);
+    del_add(l, folder, full);
+    str_copy(dir, sizeof(dir), full);
+    char *slash = strrchr(dir, '/');
+    if (slash)
+        *slash = '\0';
+    const char *ext = path_ext(full);
+    bool cue = str_icmp(ext, "cue") == 0, m3u = str_icmp(ext, "m3u") == 0;
+    if ((cue || m3u) && depth < 2)
+    {
+        FILE *f = fopen(full, "r");
+        char line[SwanStationPS5_PATH_MAX + 64];
+        while (f && fgets(line, sizeof(line), f))
+        {
+            line[strcspn(line, "\r\n")] = '\0';
+            char *name = line;
+            if (cue)
+            {
+                char *q = line;
+                while (*q == ' ' || *q == '\t')
+                    ++q;
+                if (strncasecmp(q, "FILE", 4) != 0)
+                    continue;
+                q += 4;
+                while (*q == ' ' || *q == '\t')
+                    ++q;
+                if (*q == '"')
+                {
+                    name = q + 1;
+                    char *end = strchr(name, '"');
+                    if (!end)
+                        continue;
+                    *end = '\0';
+                }
+                else
+                {
+                    name = q;
+                    char *end = strchr(name, ' ');
+                    if (end)
+                        *end = '\0';
+                }
+            }
+            else if (!line[0] || line[0] == '#')
+                continue;
+            char listed[SwanStationPS5_PATH_MAX];
+            path_join(listed, sizeof(listed), dir, name);
+            if (strncmp(listed, folder, strlen(folder)) == 0 && !strstr(name, ".."))
+                del_collect(l, folder, listed, depth + 1);
+        }
+        if (f)
+            fclose(f);
+    }
+    if (cue || str_icmp(ext, "chd") == 0 || str_icmp(ext, "iso") == 0 || str_icmp(ext, "bin") == 0 ||
+        str_icmp(ext, "pbp") == 0 || str_icmp(ext, "img") == 0)
+    {
+        char sbi[SwanStationPS5_PATH_MAX];
+        str_copy(sbi, sizeof(sbi), full);
+        char *dot = strrchr(sbi, '.');
+        if (dot && (size_t)(dot - sbi) + 5 <= sizeof(sbi))
+        {
+            strcpy(dot, ".sbi");
+            del_add(l, folder, sbi);
+        }
+    }
+}
+
+int library_delete_game_files(const Game *g)
+{
+    if (!g->path[0] || !g->folder[0])
+        return 0;
+    static DelList list;
+    list.count = 0;
+    del_collect(&list, g->folder, g->path, 0);
+    int removed = 0;
+    for (int i = 0; i < list.count; ++i)
+        if (remove(list.path[i]) == 0)
+        {
+            SwanStationPS5_log("library: deleted %s", list.path[i]);
+            ++removed;
+        }
+    /* a folder SwanStationPS5 made for an imported disc ("Title [serial]"): gone with its files, if empty */
+    size_t n = strlen(g->folder);
+    if (removed && n > 2 && g->folder[n - 1] == ']')
+        rmdir(g->folder);
+    return removed;
 }

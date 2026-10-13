@@ -56,6 +56,7 @@ enum Special
     SP_UNLOCK,
     SP_ACCOUNT,
     SP_BIOS,
+    SP_BIOS_START,
     SP_GAMES,
     SP_DATA,
     SP_CREDITS,
@@ -74,7 +75,6 @@ enum Special
     SP_PROFILE,
     SP_WHO,
     SP_HDTEX, /* drives the two core options for texture packs */
-    SP_OUTPUT, /* the screen's resolution, changed at once */
     SP_USBFOLDER, /* the games folder on USB drives, typed */
     SP_NFSHARES,  /* games on an NFS server, typed */
 };
@@ -110,17 +110,15 @@ static const char *row_help(const Row *r)
 #define NO_FIELD -1, false
 
 static const char *const OFF_ON[] = {"Off", "On"};
-static const char *const ASPECTS[] = {"Core", "4:3", "16:9", "16:10", "1:1 pixels",
-                                      "Stretch to screen"};
 static const char *const RENDERERS[] = {"GPU (Recommended)", "CPU"};
-static const char *const OUTPUTS[] = {"1080p", "1440p", "4K"};
 static const char *const INTERNAL[] = {"Native", "2x", "4x", "8x", "16x"};
 /* unused while the Emulator row is commented out */
 static const __attribute__((unused)) char *const UPSCALE[] = {"Off", "2x", "3x", "4x"};
 static const char *const FILTERS[] = {"Sharp pixels", "Smooth pixels (Scale2x)", "xBR (smoothest)"};
 static const char *const REGIONS[] = {"Auto", "NTSC (60 Hz)", "PAL (50 Hz)"};
 static const char *const PADS[] = {"Digital pad", "DualShock (analog)"};
-static const char *const COVER_STYLES[] = {"Flat", "3D box"};
+/* the pre-rendered 3D box covers are no longer used: the covers are always flat
+static const char *const COVER_STYLES[] = {"Flat", "3D box"}; */
 static const char *const SOUND_STYLES[] = {"Soft", "Wood", "Pop", "Chime", "Classic", "Off"};
 static const char *const VOLUMES[] = {"25%", "50%", "75%", "100%"};
 static const char *const VIBRATIONS[] = {"Off", "25%", "50%", "75%", "100%"};
@@ -133,6 +131,7 @@ static const char *const SHADERS[] = {"Off", "LCD3x", "CRT Royale", "CRT Basic",
                                       "NTSC 320px S-Video", "NTSC 320px Composite", "NTSC 256px S-Video",
                                       "NTSC 256px Composite"};
 static const char *const POPUP_STYLES[] = {"Banner", "Compact", "Big trophy"};
+static const char *const BIOS_START_REGIONS[] = {"NTSC-U/C (US, Canada)", "NTSC-J (Japan)", "PAL (Europe, Australia)"};
 static const char *const LIGHTBARS[] = {"System", "Player colours", "Game cover colour", "Analog mode"};
 static const char *const PLAYERS[] = {"1 or 2", "Up to 4 (multitap)"};
 static const char *const DEADZONES[] = {"Off", "5%", "10%", "15%", "20%"};
@@ -160,9 +159,7 @@ static const Row DISPLAY[] = {
     {NULL, "Upscale", "Enlarges the picture before it is scaled to the screen.", K_CHOICE, APPLY_NOW,
      SP_NONE, false, INT_FIELD(upscale), UPSCALE, 4, 1},
     */
-    {"Picture", "Aspect ratio", "The shape of the picture. Pair 16:9 with a widescreen cheat.", K_CHOICE,
-     APPLY_NOW, SP_NONE, false, INT_FIELD(aspect), ASPECTS, 6, 0},
-    {NULL, "Shader", "Sharp bilinear keeps pixels crisp without shimmer. CRT Basic adds scanlines, an RGB grille and glow. LCD3x looks like a handheld's LCD. CRT Royale is a detailed CRT with bloom and a phosphor mask (heavy). NTSC recreates the analog TV signal: Composite shows the colour fringes of old consoles, S-Video is cleaner; pick 320px or 256px to match the game's width (heavy).",
+    {"Picture", "Shader", "Sharp bilinear keeps pixels crisp without shimmer. CRT Basic adds scanlines, an RGB grille and glow. LCD3x looks like a handheld's LCD. CRT Royale is a detailed CRT with bloom and a phosphor mask (heavy). NTSC recreates the analog TV signal: Composite shows the colour fringes of old consoles, S-Video is cleaner; pick 320px or 256px to match the game's width (heavy).",
      K_CHOICE, APPLY_NOW, SP_NONE, false, INT_FIELD(shader), SHADERS, 9, 0},
     {NULL, "AMD FidelityFX Super Resolution",
      "Scales the picture to your screen before the shader, following the edges of the image, and sharpens it (AMD FSR 1).",
@@ -237,7 +234,7 @@ static const Row CONTROLS[] = {
      K_TOGGLE, APPLY_NOW, SP_NONE, false, BOOL_FIELD(touch_mouse), OFF_ON, 2, 0},
     {NULL, "Light gun", "GunCon and Justifier games: point the controller at the screen to aim (motion sensor), {R2} fires, {L2} reloads, {R3} re-centres. Automatic turns it on for known gun games.",
      K_CHOICE, APPLY_NOW, SP_NONE, false, INT_FIELD(lightgun), LIGHTGUNS, 3, 0},
-    {"Buttons", "Touchpad shortcuts", "Hold the {Touchpad} and press: {R2} fast forward, {L2} rewind (turn Rewind on in System), {Square} screenshot, {Triangle} start/pause the timer, {Circle} reset it, {R1} next disc.",
+    {"Buttons", "Touchpad shortcuts", "Hold the {Touchpad} and press: {R2} fast forward, {L2} rewind (turn Rewind on in System), {Square} screenshot, {Triangle} start/pause the timer, {Circle} reset it.",
      K_INFO, APPLY_NOW, SP_HOTKEYS, true, NO_FIELD, NULL, 0, 0},
     {NULL, "Button mapping", "Choose what each button of your controller presses.", K_ACTION,
      APPLY_NOW, SP_REMAP, false, NO_FIELD, NULL, 0, 0},
@@ -268,8 +265,14 @@ static const Row ACHIEVEMENTS[] = {
 static const Row LIBRARY[] = {
     {"Shelf", "Theme", "The look of SwanStationPS5: colours, fonts and the shelf's background.", K_CHOICE, APPLY_NOW, SP_THEME,
      true, INT_FIELD(theme), THEME_NAMES, THEME_COUNT, 0},
+    /* the pre-rendered 3D box covers are no longer used: the covers are always flat
     {NULL, "Cover art", "Flat front covers, or 3D boxes.", K_CHOICE, APPLY_NOW, SP_NONE, true,
      INT_FIELD(cover_style), COVER_STYLES, 2, 0},
+    */
+    {NULL, "Jewel cases", "The shelf shows 3D jewel cases. Off: the flat covers with a reflection on the floor, as in version 1.1.8.", K_TOGGLE,
+     APPLY_NOW, SP_NONE, true, BOOL_FIELD(jewel_cases), OFF_ON, 2, 0},
+    {NULL, "Cover lighting", "The light on the cover in the jewel case: its shading and the glare over the lid. Off: the picture as it is.", K_TOGGLE,
+     APPLY_NOW, SP_NONE, true, BOOL_FIELD(case_lighting), OFF_ON, 2, 0},
     {NULL, "Disc animation", "When a game starts, its disc slides out of the case and spins.", K_TOGGLE, APPLY_NOW,
      SP_NONE, true, BOOL_FIELD(disc_animation), OFF_ON, 2, 0},
     {NULL, "Download missing covers", "Fetches covers for new games over the internet.", K_TOGGLE,
@@ -287,8 +290,10 @@ static const Row LIBRARY[] = {
 };
 
 static const Row SYSTEM[] = {
-    {NULL, "Output resolution", "The resolution of the picture sent to the TV: 1080p, 1440p or 4K. Higher is sharper but asks more of the console. It changes at once; the screen goes dark for a moment. If your TV doesn't offer the one you pick, 1080p is used.",
-     K_CHOICE, APPLY_NOW, SP_OUTPUT, true, INT_FIELD(output_res), OUTPUTS, 3, 0},
+    {"SwanStationPS5", "Start BIOS", "Starts the console's BIOS with no disc, to manage memory cards. While Memory Card 1 Type (Restart) is set to Libretro, the saves will not show: that card belongs to each game, and with no game there is none.",
+     K_ACTION, APPLY_NOW, SP_BIOS_START, true, NO_FIELD, NULL, 0, 0},
+    {NULL, "Install discs only", "A disc put in the USB CD drive is installed but its game does not start: with the disc daemon the app is not opened, and with the app open the shelf only moves to the game. Off: the game starts by itself.", K_TOGGLE,
+     APPLY_NOW, SP_NONE, true, BOOL_FIELD(disc_install_only), OFF_ON, 2, 0},
     {NULL, "Games folder on USB drives", "A folder name to look for games in on USB drives. It is looked for on /mnt/usb0/ and /mnt/usb1/ at once, as the number changes with the drives plugged in: psx searches /mnt/usb0/psx and /mnt/usb1/psx. Leave it empty to turn it off.",
      K_ACTION, APPLY_NOW, SP_USBFOLDER, true, NO_FIELD, NULL, 0, 0},
     {NULL, "NFS library shares", "Games on an NFS server, typed as nfs:// addresses separated by ';' (only this app can read them). Example: nfs://192.168.1.187/shared/array. The shelf lists a connected share's games like a drive's; Bios, saves, states and covers stay on the console.",
@@ -386,25 +391,158 @@ static bool ss_needs_reload(const char *key)
     return false;
 }
 
+/* The core's aspect ratio is the only one: it goes first in the Picture group, as "Aspect ratio", with the
+ * widescreen hack under it, not with the rest of the core's display and enhancement options. */
+static bool is_aspect_option(int i)
+{
+    return strcmp(SS_OPTS[i].key, "swanstation_Display_AspectRatio") == 0;
+}
+
+static bool is_custom_aspect_option(int i)
+{
+    return strcmp(SS_OPTS[i].key, "swanstation_Display_CustomAspectRatioNumerator") == 0 ||
+           strcmp(SS_OPTS[i].key, "swanstation_Display_CustomAspectRatioDenominator") == 0;
+}
+
+static bool is_widescreen_option(int i)
+{
+    return strcmp(SS_OPTS[i].key, "swanstation_GPU_WidescreenHack") == 0;
+}
+
 static void add_swanstation_rows(Tab *tab, const Row *base, int base_count, const int *categories, int ncat)
 {
     static char groups[SSC_COUNT][48];
-    int extra = 0;
+    int extra = 0, aspect = -1, wide = -1, custom[2] = {-1, -1};
+    for (int i = 0; i < SS_OPT_COUNT; ++i)
+    {
+        if (base == DISPLAY && is_aspect_option(i))
+            aspect = i;
+        if (base == DISPLAY && is_widescreen_option(i))
+            wide = i;
+        if (base == DISPLAY && is_custom_aspect_option(i))
+            custom[custom[0] < 0 ? 0 : 1] = i;
+    }
     for (int c = 0; c < ncat; ++c)
         for (int i = 0; i < SS_OPT_COUNT; ++i)
             extra += SS_OPTS[i].category == categories[c];
-    Row *rows = malloc(sizeof(Row) * (size_t)(base_count + extra));
+    Row *rows = malloc(sizeof(Row) * (size_t)(base_count + extra + 4));
     if (!rows)
         return;
-    memcpy(rows, base, sizeof(Row) * (size_t)base_count);
-    int n = base_count;
+    int n = 0;
+    if (aspect >= 0)
+    {
+        Row r = {"Picture",
+                 "Aspect ratio",
+                 "The shape of the picture. Pair 16:9 with a widescreen cheat. With Custom, set the ratio with the numerator and denominator under Screen fit.",
+                 K_CHOICE,
+                 APPLY_NOW,
+                 SP_NONE,
+                 false,
+                 (int)(offsetof(Settings, ss_opt) + (size_t)aspect * sizeof(int)),
+                 false,
+                 SS_OPTS[aspect].labels,
+                 SS_OPTS[aspect].count,
+                 0};
+        rows[n++] = r;
+        if (wide >= 0)
+        {
+            r.group = NULL;
+            r.name = SS_OPTS[wide].label;
+            r.help = "Increases the field of view from 4:3 to the chosen aspect ratio in 3D games. It only has an effect with an aspect ratio wider than 4:3, such as 16:9. For 2D games, or games which use pre-rendered backgrounds, this enhancement will not work as expected.";
+            r.offset = (int)(offsetof(Settings, ss_opt) + (size_t)wide * sizeof(int));
+            r.labels = SS_OPTS[wide].labels;
+            r.count = SS_OPTS[wide].count;
+            rows[n++] = r;
+        }
+    }
+    memcpy(rows + n, base, sizeof(Row) * (size_t)base_count);
+    if (aspect >= 0)
+        rows[n].group = NULL; /* "Picture" is now on the aspect row */
+    n += base_count;
+    /* the three BIOS choices and the BIOS to start go above "Start BIOS", at the top of the SwanStationPS5 group */
+    if (base == SYSTEM)
+    {
+        for (int k = 0; k < n; ++k)
+        {
+            if (strcmp(rows[k].name, "Start BIOS") != 0)
+                continue;
+            memmove(rows + k + 4, rows + k, sizeof(Row) * (size_t)(n - k));
+            rows[k + 4].group = NULL;
+            int placed = 0;
+            for (int i = 0; i < SS_OPT_COUNT && placed < 3; ++i)
+            {
+                if (!ss_opt_is_bios(i))
+                    continue;
+                static const char *const bios_names[] = {"NTSC-J BIOS", "NTSC-U BIOS", "PAL BIOS"}; /* the table's order */
+                Row r = {placed == 0 ? "SwanStationPS5" : NULL,
+                         bios_names[placed],
+                         "Which BIOS the games of this region run: detect it automatically, the OpenBIOS built into the core, or a file of the BIOS folder. It applies when the next game starts.",
+                         K_CHOICE,
+                         APPLY_NEXT_GAME,
+                         SP_NONE,
+                         true, /* global_only: the console's BIOS is the same for every game */
+                         (int)(offsetof(Settings, ss_opt) + (size_t)i * sizeof(int)),
+                         false,
+                         ss_opt_labels(i),
+                         ss_opt_count(i),
+                         0};
+                rows[k + placed++] = r;
+            }
+            Row start = {NULL,
+                         "BIOS to start",
+                         "The console whose BIOS Start BIOS boots: it runs the BIOS chosen above for that region. NTSC-U unless you change it here; it goes back to NTSC-U every time SwanStationPS5 opens.",
+                         K_CHOICE,
+                         APPLY_NOW,
+                         SP_NONE,
+                         true,
+                         INT_FIELD(bios_start),
+                         BIOS_START_REGIONS,
+                         3,
+                         0};
+            rows[k + 3] = start;
+            n += 4;
+            break;
+        }
+    }
+    /* the custom aspect ratio goes above "Integer scaling", opening the "Screen fit" group */
+    if (custom[0] >= 0 && custom[1] >= 0)
+    {
+        for (int k = 0; k < n; ++k)
+        {
+            if (strcmp(rows[k].name, "Integer scaling") != 0)
+                continue;
+            memmove(rows + k + 2, rows + k, sizeof(Row) * (size_t)(n - k));
+            rows[k + 2].group = NULL;
+            for (int j = 0; j < 2; ++j)
+            {
+                int i = custom[j];
+                Row r = {j == 0 ? "Screen fit" : NULL,
+                         SS_OPTS[i].label,
+                         SS_OPTS[i].help,
+                         K_CHOICE,
+                         APPLY_NOW,
+                         SP_NONE,
+                         false,
+                         (int)(offsetof(Settings, ss_opt) + (size_t)i * sizeof(int)),
+                         false,
+                         SS_OPTS[i].labels,
+                         SS_OPTS[i].count,
+                         0};
+                rows[k + j] = r;
+            }
+            n += 2;
+            break;
+        }
+    }
     for (int c = 0; c < ncat; ++c)
     {
         bool first = true;
         snprintf(groups[categories[c]], sizeof(groups[0]), "%s (Core)", SS_CATEGORY_NAMES[categories[c]]);
         for (int i = 0; i < SS_OPT_COUNT; ++i)
         {
-            if (SS_OPTS[i].category != categories[c] || n >= MAX_ROWS)
+            if (SS_OPTS[i].category != categories[c] || n >= MAX_ROWS || is_aspect_option(i) || is_widescreen_option(i) ||
+                ss_opt_is_bios(i) || /* they go with Start BIOS, in SwanStationPS5 */
+                (base == DISPLAY && custom[0] >= 0 && is_custom_aspect_option(i)))
                 continue;
             Row r = {first ? groups[categories[c]] : NULL,
                      SS_OPTS[i].label,
@@ -412,11 +550,11 @@ static void add_swanstation_rows(Tab *tab, const Row *base, int base_count, cons
                      K_CHOICE,
                      ss_needs_reload(SS_OPTS[i].key) ? APPLY_NEXT_GAME : APPLY_NOW,
                      SP_NONE,
-                     false,
+                     ss_opt_is_bios(i), /* global_only: the console's BIOS is the same for every game */
                      (int)(offsetof(Settings, ss_opt) + (size_t)i * sizeof(int)),
                      false,
-                     SS_OPTS[i].labels,
-                     SS_OPTS[i].count,
+                     ss_opt_labels(i),
+                     ss_opt_count(i),
                      0};
             rows[n++] = r;
             first = false;
@@ -476,13 +614,37 @@ static struct
     float switch_t[16];
 } S;
 
+/* The game whose own settings the "This game" side edits: the running one, or the shelf's (Settings opened from the shelf) */
+static const Game *scope_game(void)
+{
+    return app.game ? app.game : app.settings_game;
+}
+
+/* The BIOS rows list what the folder holds: a file added since is appended to the choices */
+static void refresh_bios_rows(void)
+{
+    ensure_rows();
+    bios_choices_scan(app.paths.bios);
+    for (int t = 0; t < TAB_COUNT; ++t)
+        for (int k = 0; k < TABS[t].count; ++k)
+        {
+            Row *r = (Row *)&TABS[t].rows[k];
+            if (!is_swanstation_row(r))
+                continue;
+            int i = (r->offset - (int)offsetof(Settings, ss_opt)) / (int)sizeof(int);
+            if (ss_opt_is_bios(i))
+                r->count = ss_opt_count(i);
+        }
+}
+
 void settings_opened(void)
 {
+    refresh_bios_rows();
     S.cursor = -1;
     S.remap = false;
     S.players = false;
     S.who = false;
-    S.game_scope = app.game != NULL && app.game_has_own;
+    S.game_scope = scope_game() != NULL && app.game_has_own;
     S.tab_x = 0;
     S.sel_y = -1;
     S.scroll = 0;
@@ -513,7 +675,7 @@ static void first_selectable(void)
 /* The settings a row edits: this game's own, or the console-wide ones. */
 static Settings *target(const Row *r)
 {
-    return (!r->global_only && S.game_scope && app.game) ? &app.settings : &app.global;
+    return (!r->global_only && S.game_scope && scope_game()) ? &app.settings : &app.global;
 }
 
 /* "Load HD textures" is the two core options "Enable VRAM Write Texture Replacement" and "Preload Texture
@@ -555,6 +717,39 @@ static void hdtex_set(Settings *t, bool on)
     }
 }
 
+/* Turning the widescreen hack on sets the aspect ratio to 16:9 (remembering the one it had); turning it off puts
+ * that one back, or 4:3 when it is not known */
+static void widescreen_follow(Settings *t, const Row *r, int before)
+{
+    int w = ss_index("swanstation_GPU_WidescreenHack"), a = ss_index("swanstation_Display_AspectRatio");
+    if (w < 0 || a < 0 || r->offset != (int)(offsetof(Settings, ss_opt) + (size_t)w * sizeof(int)))
+        return;
+    if (t->ss_opt[w] == before) /* the hack did not change (Triangle on a default, the same value again) */
+        return;
+    bool on = t->ss_opt[w] == ss_true_index(w);
+    int v43 = -1, v169 = -1;
+    for (int v = 0; v < SS_OPTS[a].count; ++v)
+    {
+        if (strcmp(SS_OPTS[a].values[v], "4:3") == 0)
+            v43 = v;
+        if (strcmp(SS_OPTS[a].values[v], "16:9") == 0)
+            v169 = v;
+    }
+    if (v43 < 0 || v169 < 0)
+        return;
+    if (on)
+    {
+        if (t->aspect_before_wide < 0) /* what it was, even when it was already 16:9 */
+            t->aspect_before_wide = t->ss_opt[a];
+        t->ss_opt[a] = v169;
+    }
+    else
+    {
+        t->ss_opt[a] = t->aspect_before_wide >= 0 ? t->aspect_before_wide : v43;
+        t->aspect_before_wide = -1;
+    }
+}
+
 static int read_value(const Row *r)
 {
     switch (r->special)
@@ -570,15 +765,24 @@ static int read_value(const Row *r)
     return r->is_bool ? (*(const bool *)base ? 1 : 0) : *(const int *)base - r->base;
 }
 
+/* A choice or switch that is the same for every game, seen from "This game": it shows "Global setting." and can't be
+ * changed there (it is changed in "All games") */
+static bool row_locked(const Row *r)
+{
+    return r->global_only && S.game_scope && scope_game() && (r->kind == K_CHOICE || r->kind == K_TOGGLE);
+}
+
 static void write_value(const Row *r, int v)
 {
+    if (row_locked(r))
+        return;
     switch (r->special)
     {
     case SP_HDTEX:
     {
         Settings *t = target(r);
         hdtex_set(t, v != 0);
-        if (t == &app.global && (!app.game || !app.game_has_own))
+        if (t == &app.global && (!scope_game() || !app.game_has_own))
             hdtex_set(&app.settings, v != 0);
         if (app.game)
             host_apply_settings(&app.settings);
@@ -605,12 +809,13 @@ static void write_value(const Row *r, int v)
         return;
     Settings *t = target(r);
     char *base = (char *)t + r->offset;
+    int was_t = r->is_bool ? 0 : *(int *)base, was_eff = r->is_bool ? 0 : *(int *)((char *)&app.settings + r->offset);
     if (r->is_bool)
         *(bool *)base = v != 0;
     else
         *(int *)base = v + r->base;
     /* console-wide edits reach the running game unless it has its own settings */
-    if (t == &app.global && (!app.game || !app.game_has_own || r->global_only))
+    if (t == &app.global && (!scope_game() || !app.game_has_own || r->global_only))
     {
         char *eff = (char *)&app.settings + r->offset;
         if (r->is_bool)
@@ -618,14 +823,15 @@ static void write_value(const Row *r, int v)
         else
             *(int *)eff = v + r->base;
     }
+    widescreen_follow(t, r, was_t);
+    if (t == &app.global && (!scope_game() || !app.game_has_own || r->global_only))
+        widescreen_follow(&app.settings, r, was_eff);
     if (r->special == SP_LANGUAGE)
         i18n_set(app.global.language);
     if (r->special == SP_THEME)
         theme_apply(app.global.theme);
     if (r->special == SP_REMOTE)
         remote_update(app.global.remote);
-    if (r->special == SP_OUTPUT)
-        plat_set_output(app.global.output_res);
     if (r->special == SP_SOUND)
         sfx_configure(app.global.ui_sound, (app.global.ui_volume + 1) * 25);
     if (app.game)
@@ -739,13 +945,13 @@ static int ps1_index(int button)
 
 static Settings *map_target(void)
 {
-    return (S.game_scope && app.game) ? &app.settings : &app.global;
+    return (S.game_scope && scope_game()) ? &app.settings : &app.global;
 }
 
 static void set_map(int button, int to)
 {
     map_target()->button_map[button] = (int8_t)to;
-    if (map_target() == &app.global && (!app.game || !app.game_has_own))
+    if (map_target() == &app.global && (!scope_game() || !app.game_has_own))
         app.settings.button_map[button] = (int8_t)to;
 }
 
@@ -1265,7 +1471,7 @@ static void draw_help(const Row *r)
         icon_draw(r->apply == APPLY_NOW ? ICON_CHECK : ICON_CLOCK, x + 32, top + 684, 28, TH_FOCUS);
         text_draw(x + 72, top + 686, 22, FONT_REGULAR, TH_FOCUS, ALIGN_LEFT, tr(notes[r->apply]));
     }
-    if (r->global_only && S.game_scope && app.game)
+    if (r->global_only && S.game_scope && scope_game())
     {
         icon_draw(ICON_WORLD, x + 32, top + 646, 28, TH_TEXT_DIM);
         text_draw(x + 72, top + 648, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, tr("Same for every game"));
@@ -1278,14 +1484,14 @@ static void draw_header(void)
 {
     text_draw(TH_MARGIN, 40, 44, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr(S.remap ? "Button mapping" : "Settings"));
     char sub[200];
-    if (app.game)
-        snprintf(sub, sizeof(sub), "%s  \xc2\xb7  %s", shelf_game_title(app.game),
+    if (scope_game())
+        snprintf(sub, sizeof(sub), "%s  \xc2\xb7  %s", shelf_game_title(scope_game()),
                  tr(S.game_scope ? "This game" : "All games"));
     else
         str_copy(sub, sizeof(sub), tr("Applies to every game"));
     text_draw_fit(TH_MARGIN + 2, 100, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, 1000, sub);
 
-    if (!app.game)
+    if (!scope_game())
         return;
     /* scope switch, top right */
     const char *a = tr("This game"), *b = tr("All games");
@@ -1416,14 +1622,25 @@ static void draw_rows(void)
         if (ry > bottom || ry + row_h < top - 60)
             continue;
         bool sel = i == S.cursor;
-        bool dimmed = r->global_only && S.game_scope && app.game;
-        text_draw(x + 30, ry + 21, 28, FONT_REGULAR, (dimmed && !sel) ? TH_TEXT_DIM : TH_TEXT, ALIGN_LEFT,
+        bool dimmed = r->global_only && S.game_scope && scope_game();
+        const bool locked = row_locked(r);
+        text_draw(x + 30, ry + 21, 28, FONT_REGULAR, (dimmed && (locked || !sel)) ? TH_TEXT_DIM : TH_TEXT, ALIGN_LEFT,
                   tr(row_name(r)));
         if (dimmed)
             icon_draw(ICON_WORLD, x + 40 + text_width(28, FONT_REGULAR, tr(row_name(r))), ry + 24, 24,
                       TH_TEXT_DIM);
         float right = x + w - 28;
         char buf[SwanStationPS5_PATH_MAX + 64];
+        if (locked)
+        {
+            /* greyed out, with a lock: not editable here */
+            const char *label = tr("Global setting.");
+            float pw = text_width(22, FONT_REGULAR, label) + 84;
+            draw_rrect(right - pw, ry + 15, pw, 46, 23, argb_alpha(TH_PILL, 0.55f));
+            icon_draw(ICON_LOCK, right - pw + 18, ry + 25, 26, TH_TEXT_DIM);
+            text_draw(right - 20, ry + 25, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, label);
+            continue;
+        }
         switch (r->kind)
         {
         case K_CHOICE:
@@ -1569,6 +1786,10 @@ static void activate(const Row *r)
                        "Type one or more nfs:// shares, separated by ';'. Example: nfs://192.168.1.187/shared/array",
                        app.global.nfs_shares, nfs_shares_set);
         return;
+    case SP_BIOS_START:
+        sfx_play(SFX_SELECT);
+        app_start_bios();
+        return;
     case SP_UPDATE:
         sfx_play(SFX_SELECT);
         if (update_state() == UPDATE_AVAILABLE)
@@ -1632,7 +1853,7 @@ static void activate(const Row *r)
 
 static void set_scope(bool game)
 {
-    if (!app.game || game == S.game_scope)
+    if (!scope_game() || game == S.game_scope)
         return;
     if (game && !app.game_has_own)
     {
@@ -1725,22 +1946,26 @@ void settings_screen(uint32_t pressed)
             sfx_play(SFX_CLICK);
         }
     }
-    if ((pressed & BIT(BTN_SQUARE)) && app.game && app.game_has_own)
+    if ((pressed & BIT(BTN_SQUARE)) && scope_game() && app.game_has_own)
     {
         /* back to the console-wide settings for this game */
         char path[SwanStationPS5_PATH_MAX];
-        app_game_config_path(path, sizeof(path), app.game);
+        app_game_config_path(path, sizeof(path), scope_game());
         remove(path);
         app.game_has_own = false;
         app.settings = app.global;
-        host_apply_settings(&app.settings);
-        controls_reconfigure(app.game, &app.settings);
+        if (app.game)
+        {
+            host_apply_settings(&app.settings);
+            controls_reconfigure(app.game, &app.settings);
+        }
         S.game_scope = false;
         app_toast("This game uses the settings for all games again");
     }
     if (pressed & BIT(BTN_CIRCLE))
     {
         app_save_settings();
+        app_close_shelf_settings();
         sfx_play(SFX_BACK);
         app.screen = app.settings_return;
         return;
@@ -1748,7 +1973,7 @@ void settings_screen(uint32_t pressed)
 
     draw_rows();
     draw_help(r);
-    if (app.game && app.game_has_own && S.game_scope)
+    if (scope_game() && app.game_has_own && S.game_scope)
     {
         static const int glyphs[] = {GLYPH_CROSS, GLYPH_CIRCLE, GLYPH_TRIANGLE, GLYPH_SQUARE};
         static const char *const labels[] = {"Change", "Back", "Default", "Use all-games settings"};

@@ -19,6 +19,8 @@ typedef enum
 bool ps5_data_listable(void);
 /* Call first thing in main(), before any thread exists. */
 UnlockResult ps5_unlock_etahen(void);
+/* One short request by file (~0.3 s), for when another way is known to work: a service that is loaded answers at once. */
+UnlockResult ps5_unlock_quick(void);
 void ps5_unlock_reset_crash_marker(void);
 const char *ps5_unlock_describe(UnlockResult result);
 

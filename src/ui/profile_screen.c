@@ -145,6 +145,96 @@ static void tile(float x, float y, float w, int icon, uint32_t tint, const char 
     text_draw_fit(x + 28, y + 88, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, w - 56, label);
 }
 
+static void draw_header(void)
+{
+    const float ax = TH_MARGIN, ay = 40, as = 120, tx = ax + as + 32;
+    draw_rrect(ax, ay, as, as, TH_RADIUS, TH_CARD);
+    if (P.avatar)
+        plat_draw_texture(P.avatar, ax, ay, as, as, 0xffffffffu, true);
+    else
+        icon_draw(ICON_TROPHY, ax + 30, ay + 30, 60, TH_GOLD);
+    text_draw(tx, ay + 2, 48, FONT_BOLD, TH_TEXT, ALIGN_LEFT, ra_user());
+    char points[128];
+    snprintf(points, sizeof(points), tr("%u points (hardcore)   %u points (softcore)"), ra_user_hardcore_score(),
+             ra_user_softcore_score());
+    text_draw(tx, ay + 64, 24, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT,
+              ra_signed_in() ? points : tr("Not signed in yet: the points show once SwanStationPS5 is online"));
+
+    /* hardcore on or off, at the right */
+    char mode[96];
+    const bool hc = ra_hardcore();
+    snprintf(mode, sizeof(mode), "%s: %s", tr("Hardcore mode"), tr(hc ? "On" : "Off"));
+    text_draw(plat_width() - TH_MARGIN, ay + 10, 26, FONT_BOLD, hc ? TH_GOLD : TH_TEXT_DIM, ALIGN_RIGHT, mode);
+
+    /* what RetroAchievements said about the game in play: why its hardcore unlocks may not count */
+    bool emulator, version;
+    if (ra_warning(&emulator, &version))
+    {
+        const char *msg = emulator ? tr("Hardcore unlocks are not counted: RetroAchievements does not recognise this emulator yet.")
+                                   : tr("RetroAchievements has not tested this version of the game: its unlocks may not count.");
+        text_draw_fit(tx, ay + 98, 20, FONT_REGULAR, TH_DANGER, ALIGN_LEFT, plat_width() - tx - TH_MARGIN, msg);
+    }
+}
+
+static void draw_numbers(float y, float gap)
+{
+    char value[48], label[96];
+    const float w = (plat_width() - 2 * TH_MARGIN - 3 * gap) / 4;
+    snprintf(value, sizeof(value), "%d", P.earned);
+    snprintf(label, sizeof(label), tr("of %d achievements"), P.total);
+    tile(TH_MARGIN, y, w, ICON_TROPHY, TH_GOLD, value, P.total ? label : tr("achievements"));
+    snprintf(value, sizeof(value), "%d", P.mastered);
+    tile(TH_MARGIN + (w + gap), y, w, ICON_STAR, TH_GOLD, value, tr("games mastered"));
+    snprintf(value, sizeof(value), "%d", P.started);
+    tile(TH_MARGIN + 2 * (w + gap), y, w, ICON_DEVICE_GAMEPAD_2, TH_FOCUS, value, tr("games with an unlock"));
+    snprintf(value, sizeof(value), "%d%%", P.total ? P.earned * 100 / P.total : 0);
+    tile(TH_MARGIN + 3 * (w + gap), y, w, ICON_SPARKLES, TH_FOCUS, value, tr("of their achievements"));
+}
+
+static void draw_recent(float lx, float cy, float col)
+{
+    draw_rrect(lx, cy, col, 590, TH_RADIUS, TH_CARD);
+    text_draw(lx + 28, cy + 22, 26, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Recently unlocked"));
+    if (!P.recent_count)
+        text_draw_fit(lx + 28, cy + 80, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, col - 56,
+                      tr("Unlocks earned in SwanStationPS5 show here."));
+    for (int i = 0; i < P.recent_count; ++i)
+    {
+        const RaRecent *r = &P.recent[i];
+        float ry = cy + 74 + i * 64;
+        icon_draw(ICON_TROPHY, lx + 28, ry + 6, 30, r->hardcore ? TH_GOLD : TH_TEXT_DIM);
+        text_draw_fit(lx + 76, ry, 22, FONT_BOLD, TH_TEXT, ALIGN_LEFT, col - 260, r->title);
+        char when[48] = "";
+        stats_format_when(r->when, when, sizeof(when));
+        text_draw(lx + col - 28, ry, 20, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, when);
+        char sub[200], pts[96];
+        snprintf(pts, sizeof(pts), tr("%s  \xc2\xb7  %u points"), r->game, r->points);
+        snprintf(sub, sizeof(sub), "%s%s", pts, r->hardcore ? tr(" (hardcore)") : "");
+        text_draw_fit(lx + 76, ry + 30, 19, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, col - 110, sub);
+    }
+}
+
+static void draw_closest(float rx, float cy, float col)
+{
+    draw_rrect(rx, cy, col, 590, TH_RADIUS, TH_CARD);
+    text_draw(rx + 28, cy + 22, 26, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Closest to mastery"));
+    if (!P.closest_count)
+        text_draw_fit(rx + 28, cy + 80, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, col - 56,
+                      tr("Play a game with achievements to see its progress here."));
+    for (int i = 0; i < P.closest_count; ++i)
+    {
+        const Game *g = &app.library.games[P.closest[i]];
+        GameStats *st = stats_get(g->id);
+        float ry = cy + 78 + i * 84, p = percent_of(P.closest[i]);
+        text_draw_fit(rx + 28, ry, 22, FONT_BOLD, TH_TEXT, ALIGN_LEFT, col - 200, shelf_game_title(g));
+        char n[32];
+        snprintf(n, sizeof(n), "%d / %d", st ? st->ach_unlocked : 0, st ? st->ach_total : 0);
+        text_draw(rx + col - 28, ry, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, n);
+        draw_rrect(rx + 28, ry + 40, col - 56, 12, 6, TH_PILL);
+        draw_rrect(rx + 28, ry + 40, (col - 56) * p, 12, 6, TH_GOLD);
+    }
+}
+
 void profile_screen(uint32_t pressed)
 {
     /* holding L2 + R2 for a few seconds signs out */
@@ -192,73 +282,11 @@ void profile_screen(uint32_t pressed)
     else
         shelf_backdrop();
 
-    /* who */
-    const float ax = TH_MARGIN, ay = 40, as = 120;
-    draw_rrect(ax, ay, as, as, TH_RADIUS, TH_CARD);
-    if (P.avatar)
-        plat_draw_texture(P.avatar, ax, ay, as, as, 0xffffffffu, true);
-    else
-        icon_draw(ICON_TROPHY, ax + 30, ay + 30, 60, TH_GOLD);
-    text_draw(ax + as + 32, ay + 8, 48, FONT_BOLD, TH_TEXT, ALIGN_LEFT, ra_user());
-    char points[128];
-    snprintf(points, sizeof(points), tr("%u points (hardcore)   %u points (softcore)"), ra_user_hardcore_score(),
-             ra_user_softcore_score());
-    text_draw(ax + as + 32, ay + 74, 24, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT,
-              ra_signed_in() ? points : tr("Not signed in yet: the points show once SwanStationPS5 is online"));
-
-    /* the numbers */
-    char value[48], label[96];
-    const float gap = 24, w = (plat_width() - 2 * TH_MARGIN - 3 * gap) / 4, y = 200;
-    snprintf(value, sizeof(value), "%d", P.earned);
-    snprintf(label, sizeof(label), tr("of %d achievements"), P.total);
-    tile(TH_MARGIN, y, w, ICON_TROPHY, TH_GOLD, value, P.total ? label : tr("achievements"));
-    snprintf(value, sizeof(value), "%d", P.mastered);
-    tile(TH_MARGIN + (w + gap), y, w, ICON_STAR, TH_GOLD, value, tr("games mastered"));
-    snprintf(value, sizeof(value), "%d", P.started);
-    tile(TH_MARGIN + 2 * (w + gap), y, w, ICON_DEVICE_GAMEPAD_2, TH_FOCUS, value, tr("games with an unlock"));
-    snprintf(value, sizeof(value), "%d%%", P.total ? P.earned * 100 / P.total : 0);
-    tile(TH_MARGIN + 3 * (w + gap), y, w, ICON_SPARKLES, TH_FOCUS, value, tr("of their achievements"));
-
-    /* recently unlocked, on the left */
-    const float cy = 380, col = (plat_width() - 2 * TH_MARGIN - gap) / 2;
-    float lx = TH_MARGIN, rx = TH_MARGIN + col + gap;
-    draw_rrect(lx, cy, col, 590, TH_RADIUS, TH_CARD);
-    text_draw(lx + 28, cy + 22, 26, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Recently unlocked"));
-    if (!P.recent_count)
-        text_draw_fit(lx + 28, cy + 80, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, col - 56,
-                      tr("Unlocks earned in SwanStationPS5 show here."));
-    for (int i = 0; i < P.recent_count; ++i)
-    {
-        const RaRecent *r = &P.recent[i];
-        float ry = cy + 74 + i * 64;
-        icon_draw(ICON_TROPHY, lx + 28, ry + 6, 30, TH_GOLD);
-        text_draw_fit(lx + 76, ry, 22, FONT_BOLD, TH_TEXT, ALIGN_LEFT, col - 260, r->title);
-        char when[48] = "";
-        stats_format_when(r->when, when, sizeof(when));
-        text_draw(lx + col - 28, ry, 20, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, when);
-        char sub[160];
-        snprintf(sub, sizeof(sub), tr("%s  \xc2\xb7  %u points"), r->game, r->points);
-        text_draw_fit(lx + 76, ry + 30, 19, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, col - 110, sub);
-    }
-
-    /* closest to mastery, on the right */
-    draw_rrect(rx, cy, col, 590, TH_RADIUS, TH_CARD);
-    text_draw(rx + 28, cy + 22, 26, FONT_BOLD, TH_TEXT, ALIGN_LEFT, tr("Closest to mastery"));
-    if (!P.closest_count)
-        text_draw_fit(rx + 28, cy + 80, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_LEFT, col - 56,
-                      tr("Play a game with achievements to see its progress here."));
-    for (int i = 0; i < P.closest_count; ++i)
-    {
-        const Game *g = &app.library.games[P.closest[i]];
-        GameStats *st = stats_get(g->id);
-        float ry = cy + 78 + i * 84, p = percent_of(P.closest[i]);
-        text_draw_fit(rx + 28, ry, 22, FONT_BOLD, TH_TEXT, ALIGN_LEFT, col - 200, shelf_game_title(g));
-        char n[32];
-        snprintf(n, sizeof(n), "%d / %d", st ? st->ach_unlocked : 0, st ? st->ach_total : 0);
-        text_draw(rx + col - 28, ry, 22, FONT_REGULAR, TH_TEXT_DIM, ALIGN_RIGHT, n);
-        draw_rrect(rx + 28, ry + 40, col - 56, 12, 6, TH_PILL);
-        draw_rrect(rx + 28, ry + 40, (col - 56) * p, 12, 6, TH_GOLD);
-    }
+    draw_header();
+    const float gap = 24, cy = 380, col = (plat_width() - 2 * TH_MARGIN - gap) / 2;
+    draw_numbers(200, gap);
+    draw_recent(TH_MARGIN, cy, col);
+    draw_closest(TH_MARGIN + col + gap, cy, col);
 
     static const int glyphs[] = {GLYPH_CIRCLE};
     static const char *const labels[] = {"Back"};

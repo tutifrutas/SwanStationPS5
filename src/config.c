@@ -4,6 +4,10 @@
  */
 #include "config.h"
 
+#include "i18n.h"
+#include "platform/platform.h"
+#include "ui/theme.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,9 +15,9 @@
 void config_defaults(Settings *s)
 {
     memset(s, 0, sizeof(*s));
-    s->aspect = ASPECT_AUTO;
+    s->language = plat_system_language(); /* until the ini says otherwise: the console's */
     s->smooth = false; /* sharp pixels; "Smooth final scaling" is opt-in */
-    s->internal_res = 3; /* 4x (1 native, 2 2x, 3 4x, 4 8x, 5 16x) */
+    s->internal_res = 4; /* 8x (1 native, 2 2x, 3 4x, 4 8x, 5 16x) */
     s->upscale = 2;
     s->upscale_filter = UPSCALE_XBR;
     s->region = REGION_AUTO;
@@ -28,9 +32,8 @@ void config_defaults(Settings *s)
     s->quick_resume = true;
     s->update_check = true;
     snprintf(s->usb_folder, sizeof(s->usb_folder), "psx"); /* /mnt/usb0/psx and /mnt/usb1/psx */
-    s->bezel = true; /* the game's artwork frame, when there is one */
+    s->bezel = false; /* the game's artwork frame, when there is one */
     s->theme = 1; /* Neon Arcade (THEME_NEON in ui/theme.h) */
-    s->output_res = 2; /* 4K */
     s->pgxp = true; /* no wobbling polygons */
     s->ra_popups = true;
     s->hd_textures = true;
@@ -40,11 +43,15 @@ void config_defaults(Settings *s)
     s->brightness = 1;
     s->game_fixes = true;
     s->disc_animation = true;
+    s->jewel_cases = true;
+    s->case_lighting = true;
+    s->disc_install_only = false;
     s->negcon = false;
     s->touch_mouse = true;
     s->racing_triggers = false;
     for (int i = 0; i < 16; ++i)
         s->button_map[i] = (int8_t)i;
+    s->aspect_before_wide = -1;
     for (int i = 0; i < SS_OPT_COUNT; ++i)
         s->ss_opt[i] = SS_OPTS[i].def;
 }
@@ -71,17 +78,26 @@ static bool config_apply(Settings *s, const char *path)
         *eq = '\0';
         char *key = line, *value = eq + 1;
         value[strcspn(value, "\r\n")] = '\0';
-        if (strncmp(key, "swanstation_", 12) == 0)
+        if (strcmp(key, "aspect_before_widescreen") == 0)
+        {
+            /* the aspect ratio the widescreen hack replaced with 16:9, by value */
+            for (int i = 0; i < SS_OPT_COUNT; ++i)
+                if (strcmp(SS_OPTS[i].key, "swanstation_Display_AspectRatio") == 0)
+                    for (int v = 0; v < SS_OPTS[i].count; ++v)
+                        if (strcmp(value, SS_OPTS[i].values[v]) == 0)
+                            s->aspect_before_wide = v;
+        }
+        else if (strncmp(key, "swanstation_", 12) == 0)
         {
             /* a SwanStation core option, by name and value (so reordering the table keeps saved files valid) */
             for (int i = 0; i < SS_OPT_COUNT; ++i)
                 if (strcmp(key, SS_OPTS[i].key) == 0)
-                    for (int v = 0; v < SS_OPTS[i].count; ++v)
-                        if (strcmp(value, SS_OPTS[i].values[v]) == 0)
-                            s->ss_opt[i] = v;
+                {
+                    int v = ss_opt_find(i, value, true); /* a BIOS file not seen in the folder is kept by its name */
+                    if (v >= 0)
+                        s->ss_opt[i] = v;
+                }
         }
-        else if (strcmp(key, "aspect") == 0)
-            s->aspect = atoi(value) % ASPECT_COUNT;
         else if (strcmp(key, "smooth") == 0)
             s->smooth = as_bool(value);
         else if (strcmp(key, "show_fps") == 0)
@@ -143,7 +159,11 @@ static bool config_apply(Settings *s, const char *path)
         else if (strcmp(key, "pgxp") == 0)
             s->pgxp = as_bool(value);
         else if (strcmp(key, "theme") == 0)
-            s->theme = atoi(value) % 5;
+        {
+            int theme = atoi(value); /* a number that is not a theme (an older or newer file) leaves the default */
+            if (theme >= 0 && theme < THEME_COUNT)
+                s->theme = theme;
+        }
         else if (strcmp(key, "hd_textures") == 0)
             s->hd_textures = as_bool(value);
         else if (strcmp(key, "shader") == 0)
@@ -207,6 +227,12 @@ static bool config_apply(Settings *s, const char *path)
             s->sharpen = atoi(value) % 3;
         else if (strcmp(key, "disc_animation") == 0)
             s->disc_animation = as_bool(value);
+        else if (strcmp(key, "disc_install_only") == 0)
+            s->disc_install_only = as_bool(value);
+        else if (strcmp(key, "jewel_cases") == 0)
+            s->jewel_cases = as_bool(value);
+        else if (strcmp(key, "case_lighting") == 0)
+            s->case_lighting = as_bool(value);
         else if (strcmp(key, "negcon") == 0)
             s->negcon = as_bool(value);
         else if (strcmp(key, "touch_mouse") == 0)
@@ -221,8 +247,6 @@ static bool config_apply(Settings *s, const char *path)
             snprintf(s->usb_folder, sizeof(s->usb_folder), "%s", value);
         else if (strcmp(key, "nfs_shares") == 0)
             snprintf(s->nfs_shares, sizeof(s->nfs_shares), "%s", value);
-        else if (strcmp(key, "output_res") == 0)
-            s->output_res = atoi(value) % 3;
         else if (strcmp(key, "fsr") == 0)
             s->fsr = as_bool(value);
         else if (strcmp(key, "rewind") == 0)
@@ -274,14 +298,19 @@ bool config_load_game(Settings *out, const Settings *global, const char *path)
     *out = *global;
     /* the file only lists the core options that differ from their default, so the rest are the default
      * and not whatever the console-wide settings hold */
+    out->aspect_before_wide = -1;
     for (int i = 0; i < SS_OPT_COUNT; ++i)
         out->ss_opt[i] = SS_OPTS[i].def;
     if (!config_apply(out, path))
     {
         memcpy(out->ss_opt, global->ss_opt, sizeof(out->ss_opt));
+        out->aspect_before_wide = global->aspect_before_wide;
         return false;
     }
     /* these always follow the console-wide settings */
+    for (int i = 0; i < SS_OPT_COUNT; ++i)
+        if (ss_opt_is_bios(i)) /* the console's BIOS is not the game's: the file neither lists nor changes it */
+            out->ss_opt[i] = global->ss_opt[i];
     out->last_game = global->last_game;
     out->cover_style = global->cover_style;
     out->cover_download = global->cover_download;
@@ -294,7 +323,6 @@ bool config_load_game(Settings *out, const Settings *global, const char *path)
     out->remote = global->remote;
     out->update_check = global->update_check;
     snprintf(out->usb_folder, sizeof(out->usb_folder), "%s", global->usb_folder);
-    out->output_res = global->output_res;
     out->quick_resume = global->quick_resume;
     return true;
 }
@@ -367,12 +395,12 @@ bool config_save(const Settings *s, const char *path)
         return false;
     fprintf(f,
             "# SwanStationPS5 settings\n"
-            "aspect=%d\nsmooth=%d\nshow_fps=%d\nregion=%d\n"
+            "smooth=%d\nshow_fps=%d\nregion=%d\n"
             "dithering=%d\ncd_fast=%d\nanalog=%d\nstate_slot=%d\nlast_game=%d\n"
             "cover_style=%d\ncover_download=%d\nui_sound=%d\nui_volume=%d\n"
             "integer_scale=%d\ninternal_res=%d\nupscale=%d\nupscale_filter=%d\nstick_dpad=%d\nlanguage=%d\n"
             "vibration=%d\nsort_mode=%d\nshelf_category=%d\nbackground=%d\n",
-            s->aspect, s->smooth, s->show_fps, s->region, s->dithering,
+            s->smooth, s->show_fps, s->region, s->dithering,
             s->cd_fast, s->analog, s->state_slot, s->last_game, s->cover_style,
             s->cover_download, s->ui_sound, s->ui_volume, s->integer_scale, s->internal_res, s->upscale,
             s->upscale_filter, s->stick_dpad, s->language, s->vibration,
@@ -380,7 +408,7 @@ bool config_save(const Settings *s, const char *path)
     fprintf(f, "widescreen=%d\nmultitap=%d\nrewind=%d\nquick_resume=%d\ncrt=%d\nborder=%d\nremote=%d\nupdate_check=%d\n",
             s->widescreen, s->multitap, s->rewind, s->quick_resume, s->crt, s->border, s->remote,
             s->update_check);
-    fprintf(f, "renderer=%d\noutput_res=%d\nusb_folder=%s\n", s->renderer, s->output_res, s->usb_folder);
+    fprintf(f, "renderer=%d\nusb_folder=%s\n", s->renderer, s->usb_folder);
     fprintf(f, "nfs_shares=%s\n", s->nfs_shares);
     fprintf(f, "version=%s\n", SwanStationPS5_VERSION); /* a newer version starts with clean settings (main.c) */
     fprintf(f, "pgxp=%d\nra_popups=%d\nra_tracker=%d\ncrop_edges=%d\n", s->pgxp, s->ra_popups, s->ra_tracker,
@@ -393,16 +421,19 @@ bool config_save(const Settings *s, const char *path)
             s->overclock, s->brightness, s->colour, s->autosave, s->bezel);
     fprintf(f, "msaa=%d\ntexture_filter=%d\nfilter_2d=%d\nsupersampling=%d\ndeinterlace=%d\npal60=%d\ngame_fixes=%d\n",
             s->msaa, s->texture_filter, s->filter_2d, s->supersampling, s->deinterlace, s->pal60, s->game_fixes);
-    fprintf(f, "fmv_smooth=%d\ntrue_colour=%d\nboot_intro=%d\nsharpen=%d\ndisc_animation=%d\nnegcon=%d\n",
-            s->fmv_smooth, s->true_colour, s->boot_intro, s->sharpen, s->disc_animation, s->negcon);
+    fprintf(f, "fmv_smooth=%d\ntrue_colour=%d\nboot_intro=%d\nsharpen=%d\ndisc_animation=%d\nnegcon=%d\njewel_cases=%d\ncase_lighting=%d\ndisc_install_only=%d\n",
+            s->fmv_smooth, s->true_colour, s->boot_intro, s->sharpen, s->disc_animation, s->negcon, s->jewel_cases, s->case_lighting, s->disc_install_only);
     fprintf(f, "touch_mouse=%d\nrun_ahead=%d\nfast_effects=%d\nframegen=%d\nfsr=%d\n", s->touch_mouse, s->run_ahead,
             s->fast_effects, s->framegen, s->fsr);
     for (int i = 0; i < SS_OPT_COUNT; ++i)
     {
         int v = s->ss_opt[i];
-        if (v >= 0 && v < SS_OPTS[i].count && v != SS_OPTS[i].def) /* only what differs from the default */
-            fprintf(f, "%s=%s\n", SS_OPTS[i].key, SS_OPTS[i].values[v]);
+        if (v >= 0 && v < ss_opt_count(i) && v != SS_OPTS[i].def) /* only what differs from the default */
+            fprintf(f, "%s=%s\n", SS_OPTS[i].key, ss_opt_value(i, v));
     }
+    for (int i = 0; i < SS_OPT_COUNT && s->aspect_before_wide >= 0; ++i)
+        if (strcmp(SS_OPTS[i].key, "swanstation_Display_AspectRatio") == 0 && s->aspect_before_wide < SS_OPTS[i].count)
+            fprintf(f, "aspect_before_widescreen=%s\n", SS_OPTS[i].values[s->aspect_before_wide]);
     fprintf(f, "button_map=");
     for (int i = 0; i < 16; ++i)
         fprintf(f, i ? ",%d" : "%d", s->button_map[i]);

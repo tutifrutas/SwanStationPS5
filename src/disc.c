@@ -156,6 +156,11 @@ static bool find_serial(ReadSectors read, void *ctx, char *serial, size_t size)
     return ok;
 }
 
+bool disc_serial_from_reader(DiscReadSectors read, void *ctx, char *serial, size_t size)
+{
+    return find_serial(read, ctx, serial, size);
+}
+
 static bool read_iso(const char *path, char *serial, size_t size)
 {
     Image img;

@@ -22,7 +22,7 @@
 static struct
 {
     enum Screen back_to;
-    int games, played, favorites, hidden, ach_unlocked, ach_total, games_with_ach;
+    int games, played, favorites, ach_unlocked, ach_total, games_with_ach;
     uint64_t seconds;
     int top[TOP], top_count;
 } L;
@@ -46,7 +46,6 @@ static void gather(void)
             continue;
         L.played += st->seconds > 0;
         L.favorites += st->favorite;
-        L.hidden += st->hidden;
         L.seconds += st->seconds;
         if (st->ach_total > 0 && st->ach_unlocked >= 0)
         {
@@ -124,10 +123,7 @@ void library_stats_screen(uint32_t pressed)
         str_copy(label, sizeof(label), tr("achievements"));
     tile(TH_MARGIN + 2 * (w + gap), y, w, ICON_TROPHY, value, label);
     snprintf(value, sizeof(value), "%d", L.favorites);
-    if (L.hidden)
-        snprintf(label, sizeof(label), tr("favorites, %d hidden"), L.hidden);
-    else
-        str_copy(label, sizeof(label), tr("favorites"));
+    str_copy(label, sizeof(label), tr("favorites"));
     tile(TH_MARGIN + 3 * (w + gap), y, w, ICON_STAR, value, label);
 
     /* the most played, with their covers */
